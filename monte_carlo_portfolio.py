@@ -103,7 +103,9 @@ percentiles = pd.DataFrame(index=ages)
 percentiles['p99'] = results.quantile(0.99, axis=1).round(0).astype(int)
 percentiles['p95'] = results.quantile(0.95, axis=1).round(0).astype(int)
 percentiles['p90'] = results.quantile(0.90, axis=1).round(0).astype(int)
+percentiles['p75'] = results.quantile(0.75, axis=1).round(0).astype(int)
 percentiles['median'] = results.quantile(0.50, axis=1).round(0).astype(int)
+percentiles['p25'] = results.quantile(0.25, axis=1).round(0).astype(int)
 percentiles['p10'] = results.quantile(0.10, axis=1).round(0).astype(int)
 percentiles['p05'] = results.quantile(0.05, axis=1).round(0).astype(int)
 percentiles['p01'] = results.quantile(0.01, axis=1).round(0).astype(int)
@@ -123,7 +125,9 @@ final_values = results.iloc[-1].values
 print(f"99th percentile: ${int(np.percentile(final_values, 99)):>15,}")
 print(f"95th percentile: ${int(np.percentile(final_values, 95)):>15,}")
 print(f"90th percentile: ${int(np.percentile(final_values, 90)):>15,}")
+print(f"75th percentile: ${int(np.percentile(final_values, 75)):>15,}")
 print(f"Median (50th):   ${int(np.percentile(final_values, 50)):>15,}")
+print(f"25th percentile: ${int(np.percentile(final_values, 25)):>15,}")
 print(f"10th percentile: ${int(np.percentile(final_values, 10)):>15,}")
 print(f"5th percentile:  ${int(np.percentile(final_values, 5)):>15,}")
 print(f"1st percentile:  ${int(np.percentile(final_values, 1)):>15,}")
@@ -139,6 +143,8 @@ plt.fill_between(ages, percentiles['p05'], percentiles['p95'],
                  color='darkgray', alpha=0.4, label='5th-95th percentile')
 plt.fill_between(ages, percentiles['p10'], percentiles['p90'], 
                  color='gray', alpha=0.5, label='10th-90th percentile')
+plt.fill_between(ages, percentiles['p25'], percentiles['p75'], 
+                 color='dimgray', alpha=0.6, label='25th-75th percentile')
 
 # Plot median line
 plt.plot(ages, percentiles['median'], color='black', linewidth=2.5, label='Median (50th percentile)')
