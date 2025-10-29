@@ -145,7 +145,7 @@ max_value = percentiles['p99'].max()
 y_min = min_value * 0.5
 y_max = max_value * 1.5
 
-# Plot percentile bands with logarithmic Y-axis
+# Plot percentile bands
 plt.figure(figsize=(15, 8))
 
 # Fill between percentile bands (lightest to darkest)
@@ -161,11 +161,11 @@ plt.fill_between(ages, percentiles['p25'], percentiles['p75'],
 # Plot median line
 plt.plot(ages, percentiles['median'], color='black', linewidth=2.5, label='Median (50th percentile)')
 
-# Formatting with logarithmic scale
+# Formatting with custom Y-axis ticks and labels
 ax = plt.gca()
 ax.set_xlabel("Age", fontsize=12)
 ax.set_ylabel("Portfolio Value ($)", fontsize=12)
-ax.set_title("Monte Carlo Investment Portfolio Simulation - Percentile Ranges (Log Scale)", fontsize=14, fontweight='bold')
+ax.set_title("Monte Carlo Investment Portfolio Simulation", fontsize=14, fontweight='bold')
 ax.set_yscale('log')
 
 # Set dynamic Y-axis limits
