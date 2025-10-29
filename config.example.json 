@@ -1,0 +1,18 @@
+{
+  "starting_age": 40,
+  "retirement_age": 62,
+  "end_age": 90,
+  "annual_spending": 60000,
+  "avg_invest_return": 0.05,
+  "invest_std_dev": 0.12,
+  "spending_volatility": 0.05,
+  "monthly_contribution": 1000,
+  "charity_pct": 0.01,
+  "one_time_events": {
+    "50": 100000
+  },
+  "starting_wealth": 45000,
+  "social_security_start_age": 62,
+  "social_security_annual": 32000,
+  "simulations": 1000
+}
