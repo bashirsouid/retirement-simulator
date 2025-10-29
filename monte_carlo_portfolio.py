@@ -133,7 +133,7 @@ print(f"5th percentile:  ${int(np.percentile(final_values, 5)):>15,}")
 print(f"1st percentile:  ${int(np.percentile(final_values, 1)):>15,}")
 print("="*60 + "\n")
 
-# Plot percentile bands
+# Plot percentile bands with logarithmic Y-axis
 plt.figure(figsize=(15, 8))
 
 # Fill between percentile bands (lightest to darkest)
@@ -149,14 +149,13 @@ plt.fill_between(ages, percentiles['p25'], percentiles['p75'],
 # Plot median line
 plt.plot(ages, percentiles['median'], color='black', linewidth=2.5, label='Median (50th percentile)')
 
-# Formatting
+# Formatting with logarithmic scale
 plt.xlabel("Age", fontsize=12)
 plt.ylabel("Portfolio Value ($)", fontsize=12)
-plt.title("Monte Carlo Investment Portfolio Simulation - Percentile Ranges", fontsize=14, fontweight='bold')
-plt.ylim(0, 10_000_000)
-plt.gca().yaxis.set_major_formatter(ticker.FuncFormatter(lambda x, p: f'${x/1_000_000:.0f}M'))
-plt.gca().yaxis.set_major_locator(ticker.MultipleLocator(1_000_000))
-plt.grid(True, alpha=0.3, linestyle='--')
+plt.title("Monte Carlo Investment Portfolio Simulation - Percentile Ranges (Log Scale)", fontsize=14, fontweight='bold')
+plt.yscale('log')
+plt.gca().yaxis.set_major_formatter(ticker.FuncFormatter(lambda x, p: f'${x/1_000_000:.1f}M' if x >= 1_000_000 else f'${x/1_000:.0f}K'))
+plt.grid(True, alpha=0.3, linestyle='--', which='both')
 plt.legend(loc='upper left', fontsize=10)
 plt.tight_layout()
 plt.savefig('portfolio_simulation.png', dpi=150)
