@@ -133,6 +133,18 @@ print(f"5th percentile:  ${int(np.percentile(final_values, 5)):>15,}")
 print(f"1st percentile:  ${int(np.percentile(final_values, 1)):>15,}")
 print("="*60 + "\n")
 
+# Calculate dynamic Y-axis limits based on data
+# Find the minimum non-zero value across all percentiles
+min_value = percentiles['p01'].replace(0, np.nan).min()
+if pd.isna(min_value) or min_value <= 0:
+    min_value = 1000  # Default to $1K if all values are zero or invalid
+
+max_value = percentiles['p99'].max()
+
+# Add some padding (go slightly below min and above max)
+y_min = min_value * 0.5
+y_max = max_value * 1.5
+
 # Plot percentile bands with logarithmic Y-axis
 plt.figure(figsize=(15, 8))
 
@@ -150,13 +162,41 @@ plt.fill_between(ages, percentiles['p25'], percentiles['p75'],
 plt.plot(ages, percentiles['median'], color='black', linewidth=2.5, label='Median (50th percentile)')
 
 # Formatting with logarithmic scale
-plt.xlabel("Age", fontsize=12)
-plt.ylabel("Portfolio Value ($)", fontsize=12)
-plt.title("Monte Carlo Investment Portfolio Simulation - Percentile Ranges (Log Scale)", fontsize=14, fontweight='bold')
-plt.yscale('log')
-plt.gca().yaxis.set_major_formatter(ticker.FuncFormatter(lambda x, p: f'${x/1_000_000:.1f}M' if x >= 1_000_000 else f'${x/1_000:.0f}K'))
-plt.grid(True, alpha=0.3, linestyle='--', which='both')
-plt.legend(loc='upper left', fontsize=10)
+ax = plt.gca()
+ax.set_xlabel("Age", fontsize=12)
+ax.set_ylabel("Portfolio Value ($)", fontsize=12)
+ax.set_title("Monte Carlo Investment Portfolio Simulation - Percentile Ranges (Log Scale)", fontsize=14, fontweight='bold')
+ax.set_yscale('log')
+
+# Set dynamic Y-axis limits
+ax.set_ylim(y_min, y_max)
+
+# Custom Y-axis formatting
+def format_currency(x, p):
+    if x >= 1_000_000:
+        return f'${x/1_000_000:.1f}M'
+    elif x >= 1_000:
+        return f'${x/1_000:.0f}K'
+    else:
+        return f'${x:.0f}'
+
+# Generate appropriate tick locations based on the data range
+tick_locations = []
+log_min = np.floor(np.log10(y_min))
+log_max = np.ceil(np.log10(y_max))
+
+for exponent in np.arange(log_min, log_max + 1):
+    base = 10 ** exponent
+    for multiplier in [1, 2, 5]:
+        value = base * multiplier
+        if y_min <= value <= y_max:
+            tick_locations.append(value)
+
+ax.yaxis.set_ticks(tick_locations)
+ax.yaxis.set_major_formatter(ticker.FuncFormatter(format_currency))
+
+ax.grid(True, alpha=0.3, linestyle='--', which='major')
+ax.legend(loc='upper left', fontsize=10)
 plt.tight_layout()
 plt.savefig('portfolio_simulation.png', dpi=150)
 plt.show()
