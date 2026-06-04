@@ -1,0 +1,373 @@
+# =============================================================================
+# Monte Carlo Portfolio Simulator — Configuration
+# =============================================================================
+# IMPORTANT: The values below are PLACEHOLDER examples only.
+# Replace ALL of them with your actual financial data before running.
+# The default starting_wealth / annual_spending ratio is intentionally
+# conservative — you must set these to reflect your real situation.
+# =============================================================================
+# All monetary values are in TODAY'S dollars (nominal). The simulator inflates
+# spending forward each year using the stochastic inflation model. Investment
+# returns are also nominal (not inflation-adjusted).
+#
+# Run the simulation: ./run_simulation.sh
+
+
+# -----------------------------------------------------------------------------
+# Personal / Demographic
+# -----------------------------------------------------------------------------
+
+# Your current age when the simulation starts
+starting_age = 38
+
+# Age you plan to stop working and drawing a salary
+retirement_age = 60
+
+# Age the simulation runs to. With stochastic_longevity enabled, some
+# simulations will end earlier based on the SSA actuarial table — but the
+# chart always displays to this age for consistency.
+end_age = 100
+
+
+# -----------------------------------------------------------------------------
+# Wealth & Contributions
+# -----------------------------------------------------------------------------
+
+# Current total investable portfolio value (savings + brokerage + 401k, etc.)
+# NOT including home equity or illiquid assets unless you plan to liquidate them
+starting_wealth = 500000
+
+# Amount you invest per month before retirement. Stops at retirement_age.
+# Example: maxing 401k (~$2,000/mo) + IRA (~$500/mo) + taxable (~$500/mo)
+monthly_contribution = 3000
+
+# Your annual spending in TODAY'S dollars. The model compounds this forward
+# with inflation each year. Include housing, food, healthcare, travel, etc.
+# Rule of thumb: 4% of target retirement wealth = "safe" withdrawal rate
+# (e.g., $80K/yr spending → target ~$2M portfolio at retirement)
+annual_spending = 80000
+
+# Discretionary spending flexibility: how much you'll increase/decrease
+# spending in unusually good or bad market years (0.05 = ±5%)
+# Models the real human behavior of spending more in bull markets,
+# tightening in crashes — reduces sequence-of-returns risk
+spending_volatility = 0.05
+
+# Annual charitable giving as a fraction of remaining portfolio
+# (0.01 = 1% per year, ~$20K/yr on a $2M portfolio)
+charity_pct = 0.01
+
+
+# -----------------------------------------------------------------------------
+# Asset Allocation
+# -----------------------------------------------------------------------------
+
+# Fraction of portfolio held in equities (stocks). The remainder goes to bonds.
+# 0.80 = 80% stocks / 20% bonds (aggressive growth, typical pre-retirement)
+# 0.60 = 60/40 classic balanced (typical at/near retirement)
+# Note: bond returns are modeled separately and are negatively correlated with
+# stocks in bear markets (flight-to-safety effect), so allocation matters.
+equity_allocation = 0.80
+
+
+# -----------------------------------------------------------------------------
+# Return & Inflation Assumptions
+# -----------------------------------------------------------------------------
+
+# Long-run average annual nominal equity return. Used as the baseline mean
+# that regime switching and other layers modify around.
+# Historical S&P 500 nominal avg: ~10% (1928-2024), ~7% real (inflation-adj)
+# Conservative: 0.06 | Moderate: 0.07 | Optimistic: 0.09
+avg_invest_return = 0.07
+
+# Baseline annual standard deviation of returns. Used when regime switching
+# is disabled, or as the GARCH starting variance.
+# Historical S&P 500 annual std dev: ~15-20%
+invest_std_dev = 0.15
+
+# Long-run average annual inflation rate. The stochastic inflation model
+# mean-reverts to this value each year.
+# Fed target: 0.02 | Historical avg (1928-2024): ~0.031 | 1970s peak: ~0.09
+avg_inflation = 0.030
+
+
+# -----------------------------------------------------------------------------
+# Social Security
+# -----------------------------------------------------------------------------
+
+# Age at which Social Security benefits begin.
+# 62 = early (reduced benefit) | 67 = full retirement age | 70 = maximum benefit
+social_security_start_age = 67
+
+# Annual Social Security benefit in TODAY'S dollars. The model applies a
+# partial COLA (50% of simulated inflation) each year, approximating SSA's
+# annual cost-of-living adjustments.
+# Check your estimated benefit at ssa.gov/myaccount
+social_security_annual = 30000
+
+
+# -----------------------------------------------------------------------------
+# Simulation Scale
+# -----------------------------------------------------------------------------
+
+# Number of Monte Carlo simulation runs. More = smoother percentile bands.
+# 10,000  = fast (~5s),  good for testing config changes
+# 100,000 = standard (~30-60s), recommended for final analysis
+# 500,000 = high-fidelity, meaningful difference in extreme tails (1st/99th pct)
+simulations = 100000
+
+
+# -----------------------------------------------------------------------------
+# Cash Wedge (Bucket Strategy)
+# -----------------------------------------------------------------------------
+# A cash wedge holds a fixed number of years of spending in a conservative
+# cash-like account (earning ~inflation only, no equity growth). During bear
+# markets the simulator draws from the wedge instead of selling equities at
+# depressed prices, reducing sequence-of-returns risk.
+#
+# Research note (Estrada 2019, 21 countries / 115 years): bucket strategies
+# underperform simple rebalanced static allocations on average, but they
+# provide meaningful protection in early-retirement bear markets and reduce
+# the psychological cost of volatility. The five_year_mean refill rule
+# outperforms the simpler market_up rule across most historical periods.
+#
+# Escape velocity: once your withdrawal rate drops below
+# (initial_wr × cash_wedge_escape_velocity), the wedge is retired and folded
+# back into the portfolio — the portfolio is now large enough that
+# sequence-of-returns risk no longer threatens the plan.
+
+# Number of years of annual spending to hold in the cash wedge.
+# 0.0 = disabled  |  1.0 = 1 year  |  1.25 = 15 months  |  2.0 = 2 years
+# Research suggests 1–2 years is optimal; >3 years hurts returns significantly.
+cash_wedge_years = 1.25
+
+# Rule for deciding when to draw from wedge vs. portfolio.
+# "five_year_mean" — draw from wedge when 5-yr rolling return < long-run avg
+#                    (BR-3 in academic literature; best performing rule)
+# "market_up"      — draw from wedge only when last year's return was negative
+#                    (BR-1; simplest and most popular, but lowest performing)
+cash_wedge_refill_rule = "five_year_mean"
+
+# Escape velocity multiplier. Once (annual_spending / total_portfolio) drops
+# below (initial_withdrawal_rate × this value), the wedge is retired.
+# 0.25 = retire wedge when WR is 25% of starting WR (portfolio is 4× target)
+# 0.50 = retire wedge when WR is 50% of starting WR (portfolio is 2× target)
+# Set to 0.0 to never retire the wedge (keep it through entire retirement).
+cash_wedge_escape_velocity = 0.25
+
+# Cash / Bond Return Overrides
+# By default the cash wedge earns the simulated inflation rate (zero real return)
+# and the bond allocation earns regime-dependent returns (~3-6% nominal).
+# Override either to a fixed nominal rate, or set to 0.0 for zero-interest
+# portfolios (e.g. Shariah-compliant / halal investing).
+# Comment out a line to use the default model for that component.
+#
+#   cash_return_override = 0.0    → wedge earns nothing (strictest assumption)
+#   cash_return_override = 0.045  → wedge earns 4.5% nominal (T-bill rate)
+#   bond_return_override = 0.0    → bonds earn nothing (halal / no-interest)
+#   bond_return_override = 0.04   → bonds earn fixed 4% nominal every year
+
+# cash_return_override = 0.0
+# bond_return_override = 0.0
+
+# -----------------------------------------------------------------------------
+# One-Time Financial Events
+# -----------------------------------------------------------------------------
+# Lump-sum additions (positive) or withdrawals (negative) at specific ages.
+# Use for: home purchase, inheritance, college tuition, business sale, etc.
+# Format: age (as string key) = dollar amount in TODAY'S dollars
+#
+# Examples:
+#   "55" = -50000   → $50K home renovation at age 55
+#   "62" = -120000  → $120K new vehicle / RV purchase
+#   "65" = 200000   → $200K inheritance or business sale proceeds
+#   "72" = -30000   → RMD-driven extra withdrawal (if not already in spending)
+
+[one_time_events]
+"55" = -50000
+"65" = 200000
+
+
+
+# =============================================================================
+# Model Feature Flags
+# =============================================================================
+# Each flag enables a distinct modeling layer. All default to true except
+# block_bootstrap (which is an alternative to the parametric model, not an
+# addition to it — enable it to replace parametric returns with sampled history).
+#
+# Set any flag to false to disable that layer and simplify the model.
+# =============================================================================
+
+[model_flags]
+
+# REGIME SWITCHING — Markov 3-state model (bull / sideways / bear)
+# -----------------------------------------------------------------------
+# Models multi-year market cycles like:
+#   • The "Lost Decade" (2000-2010): dot-com crash → sideways → housing crash
+#   • The 1970s stagflation bear market (1973-1982)
+#   • Post-2008 slow recovery (sideways 2011-2012)
+#   • The 1990s tech bull run (persistent bull regime ~8 years)
+# Without this, every year's return is independent — no memory of last year.
+# With this, bad years cluster (bear stays bear ~45% of the time) and
+# recoveries are real but not guaranteed the following year.
+# Regime params: bull (+16% avg, 10% std), sideways (+2%, 12%), bear (-15%, 25%)
+regime_switching = true
+
+# FAT TAILS — Student's t-distribution (df=5) instead of normal distribution
+# -----------------------------------------------------------------------
+# Models the empirical reality that extreme market events happen far more
+# often than a bell curve predicts:
+#   • 2008 financial crisis: S&P -37% (a ~4σ event under normal distribution)
+#   • 1931 Great Depression: S&P -43%
+#   • 2020 COVID crash: S&P -34% in 33 days
+#   • 1987 Black Monday: S&P -22% in one day
+# A normal distribution would place 2008 as a ~1-in-10,000-year event.
+# Student's t with df=5 makes it a realistic ~1-in-25-year event.
+# This is the single highest-impact change vs. a simple normal distribution.
+fat_tails = true
+
+# GARCH VOLATILITY — GARCH(1,1) time-varying volatility clustering
+# -----------------------------------------------------------------------
+# Models the well-documented phenomenon that market volatility clusters:
+#   • After a crash, volatility stays elevated for months/years (2008-2010 VIX)
+#   • Calm bull markets breed complacency and compressed volatility (2012-2017)
+#   • "Volatility of volatility" — the VIX itself has fat tails
+# Mechanically: σ²(t) = ω + α·r²(t-1) + β·σ²(t-1)
+#   α=0.15 (shock impact), β=0.80 (persistence), ω=0.0002 (long-run floor)
+#   α+β=0.95 < 1.0 ensures long-run stationarity (vol doesn't explode forever)
+# Vol scale is capped at 2.0x to prevent pathological multi-year -50% sequences.
+garch_volatility = true
+
+# STOCHASTIC INFLATION — AR(1) mean-reverting CPI model
+# -----------------------------------------------------------------------
+# Models inflation as a persistent but mean-reverting process, capturing:
+#   • 1970s stagflation: CPI reached 9% (1973), 13.5% (1979)
+#   • 2021-2022 inflation surge: CPI peaked at 9.1% (June 2022)
+#   • 2008-2015 near-deflation: CPI fell to -0.4% (2009)
+#   • Japan's "lost decades": persistent deflation 1999-2013
+# Without this, inflation is fixed at avg_inflation every year — no risk of
+# a 1970s-style decade where your spending doubles in real terms.
+# AR(1) formula: inf(t) = avg_inf + 0.65*(inf(t-1) - avg_inf) + shock
+# Spending, SS COLA, and bond returns all respond to the simulated inflation.
+stochastic_inflation = true
+
+# MEAN REVERSION — AR(1) autocorrelation on annual returns (coeff = -0.18)
+# -----------------------------------------------------------------------
+# Models the empirically observed tendency of markets to partially mean-revert:
+#   • After 2008 crash (-37%): 2009 returned +26%, 2010 +15%
+#   • After 2002 bottom (-22%): 2003 returned +29%
+#   • After the 1990s boom: 2000-2002 saw 3 consecutive down years
+#   • After COVID crash (-34%): 2020 ended +18%, 2021 +29%
+# The coefficient -0.18 means: if last year was 10% ABOVE regime mean,
+# this year's expected return is pulled 1.8% below it (mild reversion).
+# This prevents "lucky streaks" of 10+ consecutive bull years and ensures
+# crashes are followed by elevated recovery probability — but not guaranteed.
+mean_reversion = true
+
+# CORRELATED ASSETS — Cholesky covariance between stocks, bonds, and inflation
+# -----------------------------------------------------------------------
+# Models the regime-dependent correlation between asset classes:
+#   • Bull market:    stocks/bonds corr = -0.10 (mild diversification benefit)
+#   • Bear market:    stocks/bonds corr = -0.50 (strong flight-to-safety)
+#     → When stocks crash, investors flee to bonds, driving bond prices UP
+#     → This is why 60/40 portfolios survived 2000-2002 and 2008 better than 100% stocks
+#   • Sideways:       stocks/bonds corr = -0.20
+# NOTE: 2022 was a rare exception (stocks AND bonds both fell due to rate hikes)
+#       — this model uses the more common historical pattern.
+# Without this, stocks and bonds are drawn independently — no diversification.
+correlated_assets = true
+
+# GUYTON-KLINGER GUARDRAILS — Dynamic withdrawal rate adjustment
+# -----------------------------------------------------------------------
+# Models the real-world behavior of retirees who adapt spending to portfolio health:
+#   • If withdrawal rate rises above 120% of initial WR → cut spending 10%
+#     (portfolio is stressed — you tighten the belt, like many did in 2008-2009)
+#   • If withdrawal rate falls below 80% of initial WR → raise spending 10%
+#     (portfolio is thriving — you increase discretionary spending)
+# This is the Guyton-Klinger decision rules, widely used by financial planners.
+# Effect: significantly reduces ruin rate vs. fixed withdrawal; adds realism since
+# almost no retiree keeps spending exactly the same regardless of portfolio value.
+# Thresholds are set by guardrail_floor_pct / guardrail_ceil_pct below.
+dynamic_withdrawal_guardrails = true
+
+# STOCHASTIC LONGEVITY — Death age sampled from SSA 2023 actuarial table
+# -----------------------------------------------------------------------
+# Models the uncertainty of how long you actually live:
+#   • Some simulations end at age 72 (unlucky), others at age 98 (very long)
+#   • Based on SSA 2023 Period Life Table (annual survival probabilities by age)
+#   • A 60-year-old male has ~50% chance of living past 83, ~25% past 90
+# Without this, every simulation runs to end_age — you implicitly assume you
+# live exactly that long. Stochastic longevity means some sims "die" early
+# (freeing wealth for heirs) and others run 95+ years (stressing the portfolio).
+# The chart still displays to end_age; simulations that end early show $0 after death.
+stochastic_longevity = true
+
+# CRASH SHOCK INJECTION — Independent Poisson process for major market crashes
+# -----------------------------------------------------------------------
+# Models large exogenous shocks that arrive unpredictably — beyond what the
+# regime model alone captures. Based on a Poisson process with mean ~1 per 20 years:
+#   • ~1929 Great Crash:    -49%
+#   • ~1973 Oil Crisis:     -43%
+#   • ~2000 Dot-com peak:   -38%
+#   • ~2008 Financial Crisis: -37%
+#   • ~2020 COVID crash:    -34%
+#   • ~2022 Rate shock:     -22%
+# These shocks are ADDITIVE to the regime return — a bear-regime year can be made
+# catastrophic by a simultaneous crash shock, replicating the 2008 scenario.
+# Frequency controlled by crash_frequency_years below.
+crash_shock_injection = true
+
+# BLOCK BOOTSTRAP — Replace parametric returns with sampled historical sequences
+# -----------------------------------------------------------------------
+# An ALTERNATIVE approach to the parametric model above (regime + fat tails + GARCH).
+# Instead of generating synthetic returns from a statistical model, this samples
+# consecutive 5-year blocks from the actual S&P 500 + CPI annual data (1928-2024).
+# Advantages: zero parametric assumptions; all historical patterns (Lost Decade,
+#   stagflation, Depression) are automatically included as possible sequences.
+# Disadvantages: limited to scenarios that actually happened; 96 years of data
+#   is thin for simulating 60-year retirements; rare tail events are underrepresented.
+# NOTE: Enabling this disables regime_switching, fat_tails, garch, mean_reversion,
+#   and stochastic_inflation (they're replaced by the bootstrap draws).
+#   Crash shocks, guardrails, longevity, and correlated_assets remain active.
+block_bootstrap = false
+
+
+# =============================================================================
+# Advanced Model Parameters
+# (Only change these if you understand the underlying math)
+# =============================================================================
+
+[advanced]
+# GARCH(1,1) parameters
+# α + β must be < 1.0 to ensure variance is stationary (doesn't explode to ∞)
+# α = weight on last year's shock²  (how quickly vol responds to new shocks)
+# β = weight on last year's variance (how persistent elevated vol is)
+# ω = long-run variance floor (prevents vol from collapsing to zero)
+# Calibrated to annual S&P 500 variance persistence (Engle 2001 estimates)
+garch_omega = 0.0002
+garch_alpha = 0.15
+garch_beta  = 0.80
+
+# Degrees of freedom for the Student's t-distribution
+# Lower = fatter tails = more extreme crash events
+# 4 = very fat tails (crypto-like)
+# 5 = matches empirical S&P 500 kurtosis (recommended)
+# 7 = moderate fat tails
+# 30+ = approaches normal distribution (no meaningful fat-tail effect)
+t_distribution_df = 5
+
+# Guyton-Klinger guardrail thresholds (see dynamic_withdrawal_guardrails above)
+# cut_pct:   spending reduction when portfolio is stressed      (default: 10%)
+# raise_pct: spending increase when portfolio is thriving       (default: 10%)
+# floor_pct: WR ratio below initial WR that triggers a raise    (default: 80%)
+# ceil_pct:  WR ratio above initial WR that triggers a cut      (default: 120%)
+guardrail_cut_pct   = 0.10
+guardrail_raise_pct = 0.10
+guardrail_floor_pct = 0.80
+guardrail_ceil_pct  = 1.20
+
+# Average number of years between major Poisson crash shocks
+# Lower = more frequent catastrophic crashes
+# 15 = aggressive stress test  |  20 = historically calibrated  |  30 = optimistic
+crash_frequency_years = 20
