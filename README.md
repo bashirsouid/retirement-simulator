@@ -1,8 +1,6 @@
 # Monte Carlo Retirement Simulator
 
-A retirement portfolio simulator built on a **global equity historical block bootstrap** engine. Each simulation path is constructed by stitching together random blocks of real MSCI World annual returns and CPI inflation, then calibrating the path to a forward-looking return assumption. This preserves the actual shape of market history — crash depth, volatility clustering, lost decades — while discounting the unrepeatable US-superpower premium embedded in raw historical data.
-
-No regime models. No synthetic returns. No GARCH. No fat-tail generators. The only randomness is which historical blocks get stitched together for each simulated lifetime.
+A retirement portfolio simulator built on a **global equity historical block bootstrap** engine. Each simulation path is constructed by stitching together random blocks of real MSCI World annual returns and CPI inflation, then calibrating the path to a forward-looking return assumption. This preserves the actual shape of market history — crash depth, volatility clustering, lost decades, etc.
 
 ## Quick start
 
