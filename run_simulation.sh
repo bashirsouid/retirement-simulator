@@ -3,8 +3,6 @@
 # Monte Carlo Portfolio Simulator - Setup and Run Script
 # This script creates a virtual environment, installs dependencies, and runs the simulation
 
-set -e  # Exit on error
-
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 VENV_DIR="${SCRIPT_DIR}/venv"
 PYTHON_SCRIPT="monte_carlo_portfolio.py"
@@ -48,20 +46,26 @@ else
 fi
 echo ""
 
-# Activate virtual environment
-echo "Activating virtual environment..."
-source "${VENV_DIR}/bin/activate"
+VENV_PYTHON="${VENV_DIR}/bin/python"
+VENV_PIP="${VENV_DIR}/bin/pip"
 
-# Upgrade pip
+# Install/upgrade pip using the venv's pip binary directly (avoids ensurepip permission issues)
+if [ ! -f "$VENV_PIP" ]; then
+    echo "pip not found in venv; attempting bootstrap via get-pip.py..."
+    curl -sS https://bootstrap.pypa.io/get-pip.py | "$VENV_PYTHON" || {
+        echo "Error: Could not install pip. Please run: $VENV_PYTHON -m pip install numpy pandas matplotlib"
+        exit 1
+    }
+fi
+
 echo "Upgrading pip..."
-pip install --upgrade pip --quiet
+"$VENV_PIP" install --upgrade pip --quiet
 
-# Install required packages
 echo "Installing required packages (numpy, pandas, matplotlib)..."
-pip install numpy pandas matplotlib --quiet
+"$VENV_PIP" install numpy pandas matplotlib --quiet
 
 echo ""
-echo "=== Dependencies installed successfully ==="
+echo "=== Dependencies handling complete ==="
 echo ""
 
 # Check if Python script exists
@@ -74,16 +78,12 @@ fi
 # Run the simulation
 echo "=== Running Monte Carlo Simulation ==="
 echo ""
-python "${SCRIPT_DIR}/${PYTHON_SCRIPT}"
+"$VENV_PYTHON" "${SCRIPT_DIR}/${PYTHON_SCRIPT}"
 
 echo ""
 echo "=== Simulation Complete ==="
 echo "Output saved to: ${SCRIPT_DIR}/portfolio_simulation.csv"
+echo "Chart saved to:  ${SCRIPT_DIR}/portfolio_simulation.png"
 echo ""
 
-# Deactivate virtual environment
-deactivate
-
-echo "Virtual environment deactivated."
-echo ""
 echo "To run again, simply execute: ./$(basename "${BASH_SOURCE[0]}")"

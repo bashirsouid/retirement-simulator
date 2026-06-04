@@ -1,9 +1,12 @@
+#!/usr/bin/env python3
+
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
 import json
 import os
+
 
 # Load configuration from config.json
 config_file = os.path.join(os.path.dirname(__file__), 'config.json')
@@ -21,7 +24,7 @@ retirement_age = config['retirement_age']
 end_age = config['end_age']
 annual_spending = config['annual_spending']
 avg_invest_return = config['avg_invest_return']
-invest_std_dev = config.get('invest_std_dev', 0.12)  # Standard deviation of returns (default 12%)
+invest_std_dev = config.get('invest_std_dev', 0.12)
 spending_volatility = config['spending_volatility']
 monthly_contribution = config['monthly_contribution']
 charity_pct = config['charity_pct']
@@ -59,12 +62,10 @@ for sim in range(simulations):
             wealth += monthly_contribution * 12
 
         # Random investment return using normal distribution
-        # This generates returns centered around avg_invest_return with standard deviation
         inv_return = np.random.normal(avg_invest_return, invest_std_dev)
         wealth *= (1 + inv_return)
 
         # Adjust spending for very good or bad years
-        # "good" year = inv_return > avg_invest_return: increase spending; "bad" year = decrease spending
         if inv_return > avg_invest_return:
             spend = annual_spending_arr[i] * (1 + spending_volatility)
         elif inv_return < avg_invest_return:
@@ -96,7 +97,9 @@ results.index.name = 'age'
 results = results.round(0).astype(int)
 
 # Save to CSV
-results.to_csv("portfolio_simulation.csv")
+script_dir = os.path.dirname(os.path.abspath(__file__))
+csv_path = os.path.join(script_dir, 'portfolio_simulation.csv')
+results.to_csv(csv_path)
 
 # Calculate percentiles at each age
 percentiles = pd.DataFrame(index=ages)
@@ -129,12 +132,11 @@ print(f"75th percentile: ${int(np.percentile(final_values, 75)):>15,}")
 print(f"Median (50th):   ${int(np.percentile(final_values, 50)):>15,}")
 print(f"25th percentile: ${int(np.percentile(final_values, 25)):>15,}")
 print(f"10th percentile: ${int(np.percentile(final_values, 10)):>15,}")
-print(f"5th percentile:  ${int(np.percentile(final_values, 5)):>15,}")
-print(f"1st percentile:  ${int(np.percentile(final_values, 1)):>15,}")
+print(f"5th  percentile: ${int(np.percentile(final_values, 5)):>15,}")
+print(f"1st  percentile: ${int(np.percentile(final_values, 1)):>15,}")
 print("="*60 + "\n")
 
 # Calculate dynamic Y-axis limits based on data
-# Find the minimum non-zero value across all percentiles
 min_value = percentiles['p01'].replace(0, np.nan).min()
 if pd.isna(min_value) or min_value <= 0:
     min_value = 1000  # Default to $1K if all values are zero or invalid
@@ -149,13 +151,13 @@ y_max = max_value * 1.5
 plt.figure(figsize=(15, 8))
 
 # Fill between percentile bands (lightest to darkest)
-plt.fill_between(ages, percentiles['p01'], percentiles['p99'], 
+plt.fill_between(ages, percentiles['p01'], percentiles['p99'],
                  color='lightgray', alpha=0.3, label='1st-99th percentile')
-plt.fill_between(ages, percentiles['p05'], percentiles['p95'], 
+plt.fill_between(ages, percentiles['p05'], percentiles['p95'],
                  color='darkgray', alpha=0.4, label='5th-95th percentile')
-plt.fill_between(ages, percentiles['p10'], percentiles['p90'], 
+plt.fill_between(ages, percentiles['p10'], percentiles['p90'],
                  color='gray', alpha=0.5, label='10th-90th percentile')
-plt.fill_between(ages, percentiles['p25'], percentiles['p75'], 
+plt.fill_between(ages, percentiles['p25'], percentiles['p75'],
                  color='dimgray', alpha=0.6, label='25th-75th percentile')
 
 # Plot median line
@@ -198,7 +200,9 @@ ax.yaxis.set_major_formatter(ticker.FuncFormatter(format_currency))
 ax.grid(True, alpha=0.3, linestyle='--', which='major')
 ax.legend(loc='upper left', fontsize=10)
 plt.tight_layout()
-plt.savefig('portfolio_simulation.png', dpi=150)
+
+png_path = os.path.join(script_dir, 'portfolio_simulation.png')
+plt.savefig(png_path, dpi=150)
 plt.show()
 
-print("Chart saved as: portfolio_simulation.png")
+print("Chart saved as:", png_path)
