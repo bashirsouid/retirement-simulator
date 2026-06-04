@@ -1,224 +1,148 @@
-# Monte Carlo Investment Portfolio Simulator
+# Monte Carlo Retirement Simulator
 
-A Python-based Monte Carlo simulation tool for modeling investment portfolio growth and decay over time. This script helps you understand the range of possible retirement outcomes based on your financial parameters and market variability.
+A retirement portfolio simulator built on a **global equity historical block bootstrap** engine. Each simulation path is constructed by stitching together random blocks of real MSCI World annual returns and CPI inflation, then calibrating the path to a forward-looking return assumption. This preserves the actual shape of market history — crash depth, volatility clustering, lost decades — while discounting the unrepeatable US-superpower premium embedded in raw historical data.
 
-## ⚠️ Disclaimer
+No regime models. No synthetic returns. No GARCH. No fat-tail generators. The only randomness is which historical blocks get stitched together for each simulated lifetime.
 
-**This tool is AI-generated and untested. Use at your own risk.** This simulator is provided for educational and planning purposes only. It is not financial advice, and you should consult with a qualified financial advisor before making any major financial decisions. The default configuration values are roughly based on research of national averages in the USA but are not completely verified (AI was used to research these values). Always validate assumptions with current data and professional guidance.
+## Quick start
 
-## Features
-
-- **1000-iteration Monte Carlo simulations** (configurable) of portfolio outcomes
-- **Realistic investment returns** using normal distribution (bell curve) with configurable standard deviation
-- **Dynamic spending** that adjusts based on investment performance
-- **Monthly contributions** until retirement
-- **Social Security income** starting at a specified age
-- **One-time events** (inheritances, home sales, major expenses, etc.)
-- **Annual charitable donations** as a percentage of net worth
-- **CSV output** with all simulation iterations
-- **Percentile visualization** showing outcome ranges (1st, 5th, 10th, 50th, 90th, 95th, 99th percentiles)
-- **Console summary** with key statistics
-
-## Prerequisites
-
-- Python 3.7+
-- Bash shell (Linux, macOS, or WSL on Windows)
-
-## Installation & Usage
-
-### Quick Start
-
-1. **Clone or download the repository**
-
-2. **Make the script executable:**
-   ```bash
-   chmod +x run_simulation.sh
-   ```
-
-3. **Run the simulation:**
-   ```bash
-   ./run_simulation.sh
-   ```
-
-The script will:
-- Create a Python virtual environment (first run only)
-- Install required dependencies (numpy, pandas, matplotlib)
-- Copy `config.example.json` to `config.json` (if `config.json` doesn't exist)
-- Run the simulation
-- Generate `portfolio_simulation.csv` and `portfolio_simulation.png`
-
-### Customizing Your Scenario
-
-Edit `config.json` to adjust parameters for your specific situation. The bash script will preserve your `config.json` on subsequent runs.
-
-**Example: Create different scenarios**
 ```bash
-cp config.json config_conservative.json
-# Edit config_conservative.json with lower returns
-cp config_conservative.json config.json
+cp config.example.toml config.toml   # first time only
+# edit config.toml for your situation
 ./run_simulation.sh
 ```
 
-## Configuration Parameters
+Outputs:
+- `portfolio_simulation.csv` — per-simulation wealth by age (one column per sim)
+- `portfolio_percentiles.csv` — p01/p05/p10/p25/median/p75/p90/p95/p99 by age
+- Summary table printed to stdout
 
-All parameters are defined in `config.json`:
+`run_simulation.sh` uses your system `python3`. No external dependencies — standard library only (Python 3.11+ required for `tomllib`).
 
-### Age & Timeline
-- **`starting_age`** (int): Your current age. Default: 40
-- **`retirement_age`** (int): Age at which you stop making contributions and begin living off savings. Default: 62
-- **`end_age`** (int): Age to simulate until. Default: 90
+## How the engine works
 
-### Spending
-- **`annual_spending`** (float): Annual expenses in today's dollars. Default: $60,000
-- **`spending_volatility`** (float): Fractional adjustment to spending in good/bad investment years. For example, 0.05 means spending increases 5% in good years and decreases 5% in bad years. Default: 0.05
+1. **Block bootstrap** — a simulation path is built by randomly drawing variable-length slices (5, 10, 15, or 20 years) from the MSCI World annual return array and the CPI array. Slices are concatenated until the full horizon (`end_age - starting_age + 1` years) is covered. Equity returns and inflation are always drawn from the *same* historical slice, so their co-movement is preserved.
 
-### Investment Returns
-- **`avg_invest_return`** (float): Expected average annual investment return (e.g., 0.05 = 5%). Default: 0.05
-- **`invest_std_dev`** (float): Standard deviation of returns (volatility). Controls how much returns vary year-to-year. Higher values = more variable returns. Default: 0.12 (12%)
-  - Conservative portfolio (bonds + stocks): 0.08–0.10
-  - Balanced portfolio (60/40 stocks/bonds): 0.10–0.12
-  - Aggressive portfolio (mostly stocks): 0.15–0.18
+2. **CAGR calibration** — the raw bootstrapped equity series has a geometric mean of ~9.7% (MSCI World 1970–2023). Each path is shifted in log-space so its geometric mean equals `target_equity_cagr`. Crash magnitude and volatility profile are preserved; only the long-run drift is adjusted. The same shift is applied to inflation toward `target_inflation`.
 
-### Contributions & Withdrawals
-- **`monthly_contribution`** (float): Monthly savings added to portfolio (stops at retirement). Default: $1,000
-- **`charity_pct`** (float): Annual charitable donation as a percentage of net worth. For example, 0.025 = 2.5% annually. Default: 0.01 (1%)
+3. **Path simulation** — the calibrated return and inflation series drive a year-by-year engine covering contributions, portfolio growth, inflation-indexed spending, Social Security, a cash wedge, charity, and one-time events.
 
-### Windfalls & Major Events
-- **`one_time_events`** (object): One-time income (inheritance, home sale) or expenses (major purchase). Keys are ages, values are dollar amounts (positive for income, negative for expenses). Default: $100,000 at age 50
-  - Example with multiple events:
-    ```json
-    "one_time_events": {
-      "50": 100000,
-      "65": -50000,
-      "75": 250000
-    }
-    ```
+### Why MSCI World instead of S&P 500?
 
-### Starting Conditions
-- **`starting_wealth`** (float): Initial portfolio value. Default: $45,000
+The S&P 500 1928–2023 geometric mean is ~9.7% nominal. The MSCI World 1970–2023 geometric mean is also ~9.7% nominal — the same issue. Both reflect the same post-WWII developed-market bull run. The Dimson–Marsh–Staunton Global Investment Returns Yearbook (2025) estimates a forward-looking global DM equity return of roughly 6–7% nominal, discounting the structural tailwinds that cannot repeat. Setting `target_equity_cagr = 0.07` applies that discount explicitly, while still using MSCI World's real crash history (1974: −25%, 2002: −20%, 2008: −40%) as the distribution of outcomes.
 
-### Social Security
-- **`social_security_start_age`** (int): Age at which Social Security payments begin. Default: 62
-- **`social_security_annual`** (float): Annual Social Security benefit amount in today's dollars. Default: $32,000
-  - Note: The maximum Social Security benefit for a high-earner claiming at 62 in 2025 is roughly $2,660/month (~$31,920/year), but this varies by earning history and claiming age.
+## Configuration
 
-### Simulation Settings
-- **`simulations`** (int): Number of Monte Carlo iterations to run. More iterations = smoother results but longer runtime. Default: 1000
+All configuration lives in `config.toml`. Copy `config.example.toml` as a starting point.
 
-## Understanding the Output
+### Human levers
 
-### Console Output
+These are the knobs you actually care about:
 
-```
-==============================================================
-MONTE CARLO SIMULATION SUMMARY
-==============================================================
+| Parameter | Description |
+|---|---|
+| `starting_age` | Your current age |
+| `retirement_age` | Age you stop contributing and start drawing |
+| `end_age` | Simulation end age (e.g. 100) |
+| `starting_wealth` | Current investable net worth |
+| `monthly_contribution` | Monthly savings during accumulation phase |
+| `annual_spending` | Target annual spending in today's dollars |
+| `spending_volatility` | Fraction to flex spending up/down in good/bad equity years (e.g. `0.10` = ±10%) |
+| `charity_pct` | Annual charitable giving as fraction of portfolio balance |
+| `equity_allocation` | Fraction in global equities; remainder earns `bond_return_override` |
+| `social_security_start_age` | Age at which SS income begins |
+| `social_security_annual` | Annual SS benefit in today's dollars |
+| `simulations` | Number of Monte Carlo paths (10,000 recommended) |
 
-Number of simulations: 1000
-Age range: 40 to 90
-Average return: 5.0% per year
-Standard deviation: 12.0% per year
+### Return assumptions
 
---------------------------------------------------------------
-FINAL PORTFOLIO VALUE STATISTICS (at age 90)
---------------------------------------------------------------
-99th percentile: $1,234,567
-95th percentile: $  987,654
-90th percentile: $  876,543
-Median (50th):   $  654,321
-10th percentile: $  432,109
-5th percentile:  $  321,098
-1st percentile:  $  123,456
-==============================================================
+| Parameter | Default | Description |
+|---|---|---|
+| `target_equity_cagr` | `0.07` | Forward-looking nominal equity CAGR (~4% real at 3% inflation). DMS Yearbook 2025 estimate for global DM. Lower = more conservative. Set to `0.097` to use raw MSCI history unmodified. |
+| `target_inflation` | `0.03` | Nominal CPI target. 3% is modestly above the Fed 2% anchor. |
+
+### Cash wedge
+
+The cash wedge holds a liquid cash buffer at retirement to avoid selling equities in down years.
+
+| Parameter | Description |
+|---|---|
+| `cash_wedge_years` | Years of inflation-adjusted spending held in cash. Set to `0` to disable. |
+| `cash_wedge_refill_rule` | `"five_year_mean"` — use wedge when 5-year avg return is below target; `"negative_year"` — use in any down year |
+| `cash_wedge_escape_velocity` | Dissolve the wedge permanently once withdrawal rate drops below this fraction of the initial retirement WR. E.g. `0.25` means once your WR is ¼ of what it was at retirement, the wedge is no longer needed. |
+| `cash_return_override` | Nominal annual return on the cash bucket (default `0.0` — conservative) |
+| `bond_return_override` | Nominal annual return for the non-equity allocation (default `0.0`) |
+
+### Bootstrap tuning
+
+```toml
+bootstrap_block_sizes = [5, 10, 15, 20]  # block lengths in years
 ```
 
-This shows the distribution of final portfolio values across all 1000 simulations, helping you understand best-case, worst-case, and most-likely outcomes.
+Longer blocks preserve more sequence autocorrelation (e.g. a whole lost decade stays together). Shorter blocks allow more recombination. The default mix of 5–20 year blocks is a reasonable balance.
 
-### CSV Output (`portfolio_simulation.csv`)
+### One-time events
 
-Contains one row per age and one column per simulation. You can import this into Excel, Pandas, or any spreadsheet tool for further analysis.
-
-### Chart Output (`portfolio_simulation.png`)
-
-A visualization showing:
-- **Black line**: Median (50th percentile) outcome
-- **Gray band (darkest)**: 10th–90th percentile range (most likely outcomes)
-- **Gray band (medium)**: 5th–95th percentile range
-- **Gray band (lightest)**: 1st–99th percentile range (extremes)
-
-## Notes on Assumptions
-
-- **Inflation ignored**: All values are in "today's dollars." Inflation is not modeled, keeping calculations simpler and focusing on real (inflation-adjusted) returns.
-- **Normal distribution returns**: Investment returns follow a bell curve with occasional extreme years, mimicking historical market behavior.
-- **Spending adjusts with performance**: In above-average return years, spending increases slightly; in below-average years, it decreases. This simulates adaptive spending behavior.
-- **No taxes**: Tax implications are not included in the model.
-- **No employer matching**: Contributions are assumed to be from personal savings, not employer matches.
-
-## Example Scenarios
-
-### Conservative (Low Risk)
-```json
-{
-  "avg_invest_return": 0.04,
-  "invest_std_dev": 0.08,
-  "annual_spending": 50000,
-  "monthly_contribution": 2000
-}
+```toml
+[one_time_events]
+"45" = 1000000    # positive = inflow (inheritance, equity vest, property sale)
+"55" = -100000    # negative = outflow (large purchase, tax bill)
+"60" = 250000
 ```
 
-### Balanced (Medium Risk)
-```json
-{
-  "avg_invest_return": 0.06,
-  "invest_std_dev": 0.12,
-  "annual_spending": 60000,
-  "monthly_contribution": 1500
-}
+Keys are ages as quoted strings. Values are nominal dollars at the time of the event (not today's dollars).
+
+## Understanding the output
+
+```
+ PORTFOLIO AT AGE 100                     NOMINAL         TODAY'S $
+---------------------------------------------------------------------------
+ 99th percentile                      $46,077,966        $7,157,282
+ ...
+ Median percentile                    $35,925,408        $5,580,287
+ ...
+ 1st percentile                       $20,920,986        $3,249,653
 ```
 
-### Aggressive (High Risk)
-```json
-{
-  "avg_invest_return": 0.08,
-  "invest_std_dev": 0.18,
-  "annual_spending": 70000,
-  "monthly_contribution": 1000
-}
+- **NOMINAL** — raw portfolio value at end age in future dollars
+- **TODAY'S $** — nominal value deflated by the median cumulative inflation across all simulations. This is the purchasing-power equivalent in current dollars.
+- **Depleted anytime** — fraction of simulations where the total portfolio (portfolio + wedge) hit zero at any point in retirement
+- **Depleted at `end_age`** — fraction where the final year value was zero
+- **SS-only anytime** — fraction where the portfolio was exhausted but Social Security income alone covered spending
+- **Wedge depleted** — fraction where the cash wedge ran to zero before the escape-velocity condition triggered. A high number here (including 100%) is expected when your withdrawal rate is very low — the portfolio grows quickly enough that the wedge escape condition fires and the wedge is merged back into the portfolio.
+
+## Design
+
+The simulator is a single Python file with no external dependencies.
+
+**Key functions:**
+
+- `bootstrap_historical_series(cfg, rng)` — draws one bootstrapped + CAGR-shifted path
+- `_shift_to_target(series, target_cagr)` — log-space CAGR calibration
+- `simulate_path(cfg, seed)` — runs one full lifetime simulation, returns `SimulationPath`
+- `apply_guardrail_cut(...)` — cuts spending if withdrawal rate exceeds the ceiling (raise side omitted — spending grows only via inflation indexing, preventing compounding spending in bull runs)
+- `run_simulation(cfg)` — runs N paths and aggregates results
+- `print_summary(...)` — prints the stdout summary table
+
+**Data structures:**
+
+- `SimulationConfig` — frozen dataclass, all config fields
+- `YearState` — one year of simulation state (wealth, spending, SS, inflation, etc.)
+- `SimulationPath` — full lifetime path plus depletion/SS flags
+
+## Testing
+
+Unit tests live in `tests/test_simulator.py`. Run:
+
+```bash
+python3 -m unittest discover -s tests -v
 ```
 
-## Troubleshooting
+Tests cover:
 
-**Error: "config.json not found"**
-- Ensure `config.example.json` exists in the same directory as the scripts, or create `config.json` manually.
-
-**Error: "Python 3 is not installed"**
-- Install Python 3.7 or later from python.org or your system package manager.
-
-**Script runs but produces no output**
-- Check that matplotlib is installed correctly. The plot window may appear in the background on some systems.
-
-**CSV values look wrong**
-- Verify your configuration parameters. For example, very high spending relative to starting wealth will lead to depletion.
-
-## Files
-
-- `run_simulation.sh` – Bash script to set up environment and run simulation
-- `monte_carlo_portfolio.py` – Main Python simulation script
-- `config.example.json` – Example configuration file (commit to repo)
-- `config.json` – Your personal configuration (generated from example, add to .gitignore)
-- `portfolio_simulation.csv` – Output CSV with all simulation iterations
-- `portfolio_simulation.png` – Output visualization chart
-- `.gitignore` – Excludes personal config, outputs, and venv from version control
-
-## License
-
-This tool is provided as-is for educational and personal use.
-
-## Contributing
-
-Feel free to fork, modify, and improve this tool. Some potential enhancements:
-- Tax modeling
-- Inflation adjustment
-- Asset allocation rebalancing
-- Withdrawal sequencing optimization
-- More sophisticated return distributions (log-normal, Student-t)
+- Bootstrap series length matches horizon exactly
+- All bootstrapped values are drawn from the historical arrays (not synthesized)
+- Determinism: same seed → same path
+- Earlier retirement produces lower terminal wealth (all else equal)
+- High spending triggers depletion; low spending does not
+- Social Security income compounds with inflation correctly
