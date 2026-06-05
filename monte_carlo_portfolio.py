@@ -84,6 +84,10 @@ assert len(MSCI_WORLD_ANNUAL) == len(CPI_ANNUAL) == 54, (
 MSCI_WORLD_GEO_MEAN: float = math.exp(fmean(math.log1p(x) for x in MSCI_WORLD_ANNUAL)) - 1.0
 CPI_GEO_MEAN: float = math.exp(fmean(math.log1p(x) for x in CPI_ANNUAL)) - 1.0
 
+# Global log means for anchored shift (Option 3: preserve shocks relative to global mean)
+MSCI_WORLD_GEO_LOG_MEAN: float = fmean(math.log1p(x) for x in MSCI_WORLD_ANNUAL)
+CPI_GEO_LOG_MEAN: float = fmean(math.log1p(x) for x in CPI_ANNUAL)
+
 DEFAULT_BLOCK_SIZES = (5, 10, 15, 20, 30, 40)   # Option 1: wider blocks preserve lost decades
 DEFAULT_TARGET_EQUITY_CAGR = 0.07
 DEFAULT_TARGET_INFLATION   = 0.03
@@ -109,22 +113,23 @@ DEFAULT_STRESS_MIN_WINDOWS = 3
 # target CAGR, instead of being softened by a downward drift shift.
 # ---------------------------------------------------------------------------
 
-def _shift_to_target_anchored(series: List[float], target_cagr: float) -> List[float]:
-    """Shift each series to target_cagr while preserving shocks relative to its own mean.
+def _shift_to_target_anchored(series: List[float], target_cagr: float, global_log_mean: float) -> List[float]:
+    """Shift each series to target_cagr while preserving shocks relative to GLOBAL historical mean.
     
     Decomposition in log-space:
-    log(1+r_t) = series_log_mean + shock_t
+    log(1+r_t) = global_log_mean + shock_t
     Reconstruction:
     log(1+r_t_new) = log(1+target_cagr) + shock_t
+    
+    This preserves actual crash magnitudes (e.g., -40% stays ~-40%) while adjusting
+    the overall expected return to target_cagr.
     """
     if not series:
         return series
     target_log = math.log1p(target_cagr)
-    # Calculate the actual log-mean of this specific series (not global mean)
-    series_log_mean = fmean(math.log1p(v) for v in series)
     out = []
     for v in series:
-        shock = math.log1p(v) - series_log_mean
+        shock = math.log1p(v) - global_log_mean
         new_log = target_log + shock
         out.append(max(math.exp(new_log) - 1.0, -0.9999))
     return out
@@ -263,9 +268,10 @@ def bootstrap_historical_series(
 ) -> Tuple[List[float], List[float]]:
     """Stitch random historical blocks, then apply anchored drift shift.
 
-    If force_bad_opening=True, the first block is drawn exclusively from
-    the bottom-quartile windows of length stress_first_n_years, simulating
-    a sequence-of-returns catastrophe right at retirement (Option 2).
+    If force_bad_opening=True, the stress_first_n_years starting at retirement
+    are replaced with worst historical windows, simulating a sequence-of-returns
+    catastrophe right at retirement (Option 2). The remaining years stay identical
+    to the normal case for fair comparison.
     """
     horizon = cfg.end_age - cfg.starting_age + 1
     n_hist  = len(MSCI_WORLD_ANNUAL)
@@ -273,46 +279,43 @@ def bootstrap_historical_series(
     if not sizes:
         raise ValueError("No valid bootstrap block sizes")
 
+    # --- First, generate the full random series (identical for normal and stress) ---
     eq_raw:  List[float] = []
     inf_raw: List[float] = []
 
-# --- Option 2: forced bad opening block ---
-    if force_bad_opening and cfg.stress_first_n_years > 0:
-        pre_ret_years = max(0, min(cfg.retirement_age - cfg.starting_age, horizon))
-
-        while len(eq_raw) < pre_ret_years:
-            remaining = pre_ret_years - len(eq_raw)
-            candidates = [s for s in sizes if s <= remaining] or sizes
-            block = rng.choice(candidates)
-            start = rng.randint(0, n_hist - block)
-            end = start + block
-            eq_raw.extend(MSCI_WORLD_ANNUAL[start:end])
-            inf_raw.extend(CPI_ANNUAL[start:end])
-
-        stress_len = min(cfg.stress_first_n_years, horizon - len(eq_raw), n_hist)
-        if stress_len > 0:
-            bad_starts = _get_worst_starts(stress_len)
-            open_start = rng.choice(bad_starts)
-            eq_raw.extend(MSCI_WORLD_ANNUAL[open_start: open_start + stress_len])
-            inf_raw.extend(CPI_ANNUAL[open_start: open_start + stress_len])
-
-    # --- Fill remaining horizon with normal random blocks ---
     while len(eq_raw) < horizon:
-        remaining  = horizon - len(eq_raw)
+        remaining = horizon - len(eq_raw)
         candidates = [s for s in sizes if s <= remaining] or sizes
-        block      = rng.choice(candidates)
-        start      = rng.randint(0, n_hist - block)
-        end        = start + block
+        block = rng.choice(candidates)
+        start = rng.randint(0, n_hist - block)
+        end = start + block
         eq_raw.extend(MSCI_WORLD_ANNUAL[start:end])
         inf_raw.extend(CPI_ANNUAL[start:end])
 
     eq_raw  = eq_raw[:horizon]
     inf_raw = inf_raw[:horizon]
 
-    # Option 3: anchored shock decomposition for both series
+    # --- Option 2: replace stress years with worst historical windows ---
+    if force_bad_opening and cfg.stress_first_n_years > 0:
+        pre_ret_years = max(0, min(cfg.retirement_age - cfg.starting_age, horizon))
+        stress_len = min(cfg.stress_first_n_years, horizon - pre_ret_years, n_hist)
+        
+        if stress_len > 0:
+            bad_starts = _get_worst_starts(stress_len)
+            # Use deterministic selection based on RNG state to keep results reproducible
+            # We derive a stress-specific seed from the RNG state
+            stress_rng = random.Random(rng.randint(0, 2**31 - 1))
+            open_start = stress_rng.choice(bad_starts)
+            
+            # Replace stress years (starting at retirement)
+            ret_start = pre_ret_years
+            eq_raw = eq_raw[:ret_start] + MSCI_WORLD_ANNUAL[open_start:open_start + stress_len] + eq_raw[ret_start + stress_len:]
+            inf_raw = inf_raw[:ret_start] + CPI_ANNUAL[open_start:open_start + stress_len] + inf_raw[ret_start + stress_len:]
+
+    # Option 3: anchored shock decomposition for both series (global-mean referenced)
     return (
-        _shift_to_target_anchored(eq_raw,  cfg.target_equity_cagr),
-        _shift_to_target_anchored(inf_raw, cfg.target_inflation),
+        _shift_to_target_anchored(eq_raw,  cfg.target_equity_cagr, MSCI_WORLD_GEO_LOG_MEAN),
+        _shift_to_target_anchored(inf_raw, cfg.target_inflation, CPI_GEO_LOG_MEAN),
     )
 
 
