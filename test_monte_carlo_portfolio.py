@@ -39,6 +39,7 @@ def make_cfg(**overrides):
         target_inflation=0.03,
         one_time_events={},
         bootstrap_block_sizes=DEFAULT_BLOCK_SIZES,
+        stress_first_n_years=0,
     )
     data.update(overrides)
     return sim.SimulationConfig(**data)

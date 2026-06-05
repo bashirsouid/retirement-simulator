@@ -7,8 +7,6 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PYTHON_SCRIPT="${SCRIPT_DIR}/monte_carlo_portfolio.py"
 CONFIG="${SCRIPT_DIR}/config.toml"
 CONFIG_EXAMPLE="${SCRIPT_DIR}/config.example.toml"
-VENV_DIR="${SCRIPT_DIR}/venv"
-REQUIREMENTS="numpy pandas matplotlib"
 
 echo "=== Monte Carlo Portfolio Simulator ==="
 echo ""
@@ -41,39 +39,10 @@ else
 fi
 echo ""
 
-# ── Dependency setup ──────────────────────────────────────────────────────────
-# Use existing venv if present, otherwise create one cleanly with python3 -m venv
-# (no ensurepip bootstrapping — Python 3.11+ ships pip inside venv by default)
-
-PYTHON="${VENV_DIR}/bin/python"
-
-if [ ! -f "$PYTHON" ]; then
-    echo "Creating virtual environment..."
-    python3 -m venv "$VENV_DIR"
-    echo "Virtual environment created."
-    echo ""
-fi
-
-# Check if all required packages are already installed
-NEED_INSTALL=false
-for pkg in $REQUIREMENTS; do
-    if ! "$PYTHON" -c "import ${pkg}" &>/dev/null; then
-        NEED_INSTALL=true
-        break
-    fi
-done
-
-if [ "$NEED_INSTALL" = true ]; then
-    echo "Installing dependencies (numpy, pandas, matplotlib)..."
-    "$VENV_DIR/bin/pip" install --quiet $REQUIREMENTS
-    echo "Dependencies installed."
-    echo ""
-fi
-
 # ── Run ───────────────────────────────────────────────────────────────────────
 echo "=== Running Monte Carlo Simulation ==="
 echo ""
-"$PYTHON" "$PYTHON_SCRIPT"
+python3 "$PYTHON_SCRIPT"
 
 echo ""
 echo "=== Done ==="

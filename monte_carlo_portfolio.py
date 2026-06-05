@@ -90,6 +90,8 @@ DEFAULT_TARGET_INFLATION   = 0.03
 
 DEFAULT_GUARDRAIL_CEILING = 1.20
 DEFAULT_GUARDRAIL_CUT     = 0.10
+DEFAULT_STRESS_PERCENTILE = 0.10
+DEFAULT_STRESS_MIN_WINDOWS = 3
 
 
 # ---------------------------------------------------------------------------
@@ -108,20 +110,21 @@ DEFAULT_GUARDRAIL_CUT     = 0.10
 # ---------------------------------------------------------------------------
 
 def _shift_to_target_anchored(series: List[float], target_cagr: float) -> List[float]:
-    """Shift drift to target_cagr while preserving historical shock magnitudes exactly.
-
+    """Shift each series to target_cagr while preserving shocks relative to its own mean.
+    
     Decomposition in log-space:
-        log(1+r_t) = raw_log_mean + shock_t
+    log(1+r_t) = series_log_mean + shock_t
     Reconstruction:
-        log(1+r_t_new) = log(1+target_cagr) + shock_t
+    log(1+r_t_new) = log(1+target_cagr) + shock_t
     """
     if not series:
         return series
-    raw_log_mean = fmean(math.log1p(x) for x in series)
     target_log = math.log1p(target_cagr)
+    # Calculate the actual log-mean of this specific series (not global mean)
+    series_log_mean = fmean(math.log1p(v) for v in series)
     out = []
     for v in series:
-        shock = math.log1p(v) - raw_log_mean
+        shock = math.log1p(v) - series_log_mean
         new_log = target_log + shock
         out.append(max(math.exp(new_log) - 1.0, -0.9999))
     return out
@@ -141,7 +144,7 @@ def _worst_block_starts(n_years: int, bottom_quartile: bool = True) -> List[int]
         log_cum = sum(math.log1p(MSCI_WORLD_ANNUAL[start + i]) for i in range(n_years))
         results.append((log_cum, start))
     results.sort()
-    cutoff = max(1, len(results) // 4)
+    cutoff = max(DEFAULT_STRESS_MIN_WINDOWS, math.ceil(len(results) * DEFAULT_STRESS_PERCENTILE))
     return [start for _, start in results[:cutoff]]
 
 
@@ -273,13 +276,25 @@ def bootstrap_historical_series(
     eq_raw:  List[float] = []
     inf_raw: List[float] = []
 
-    # --- Option 2: forced bad opening block ---
+# --- Option 2: forced bad opening block ---
     if force_bad_opening and cfg.stress_first_n_years > 0:
-        stress_len  = min(cfg.stress_first_n_years, horizon, n_hist)
-        bad_starts  = _get_worst_starts(stress_len)
-        open_start  = rng.choice(bad_starts)
-        eq_raw.extend(MSCI_WORLD_ANNUAL[open_start: open_start + stress_len])
-        inf_raw.extend(CPI_ANNUAL[open_start: open_start + stress_len])
+        pre_ret_years = max(0, min(cfg.retirement_age - cfg.starting_age, horizon))
+
+        while len(eq_raw) < pre_ret_years:
+            remaining = pre_ret_years - len(eq_raw)
+            candidates = [s for s in sizes if s <= remaining] or sizes
+            block = rng.choice(candidates)
+            start = rng.randint(0, n_hist - block)
+            end = start + block
+            eq_raw.extend(MSCI_WORLD_ANNUAL[start:end])
+            inf_raw.extend(CPI_ANNUAL[start:end])
+
+        stress_len = min(cfg.stress_first_n_years, horizon - len(eq_raw), n_hist)
+        if stress_len > 0:
+            bad_starts = _get_worst_starts(stress_len)
+            open_start = rng.choice(bad_starts)
+            eq_raw.extend(MSCI_WORLD_ANNUAL[open_start: open_start + stress_len])
+            inf_raw.extend(CPI_ANNUAL[open_start: open_start + stress_len])
 
     # --- Fill remaining horizon with normal random blocks ---
     while len(eq_raw) < horizon:
@@ -458,7 +473,7 @@ def simulate_path(
             if ss_surplus > 0.0:
                 portfolio_wealth += ss_surplus
 
-            # Wedge logic
+# Wedge logic
             if not wedge_retired:
                 total_assets        = portfolio_wealth + wedge_cash
                 current_portfolio_wr = (
@@ -759,7 +774,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             s_dep_any, s_dep_term, s_ss_only, s_wedge, s_inf,
             label=(
                 f"STRESS SCENARIO — Worst {cfg.stress_first_n_years}-Year Opening Block "
-                f"(bottom-quartile historical windows)"
+                f"(bottom-decile historical windows)"
             ),
         )
 
