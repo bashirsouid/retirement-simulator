@@ -106,7 +106,6 @@ Keys are ages as quoted strings. Values are nominal dollars at the time of the e
 - **TODAY'S $** — nominal value deflated by the median cumulative inflation across all simulations. This is the purchasing-power equivalent in current dollars.
 - **Depleted anytime** — fraction of simulations where the total portfolio (portfolio + wedge) hit zero at any point in retirement
 - **Depleted at `end_age`** — fraction where the final year value was zero
-- **SS-only anytime** — fraction where the portfolio was exhausted but Social Security income alone covered spending
 - **Wedge depleted** — fraction where the cash wedge ran to zero before the escape-velocity condition triggered. A high number here (including 100%) is expected when your withdrawal rate is very low — the portfolio grows quickly enough that the wedge escape condition fires and the wedge is merged back into the portfolio.
 
 ## Design

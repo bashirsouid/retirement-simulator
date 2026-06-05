@@ -213,7 +213,6 @@ class SimulationPath:
     years:                  List[YearState]
     depleted_any_time:      bool
     terminal_depleted:      bool
-    ss_only_any_time:       bool
     wedge_depleted:         bool
     final_cumulative_inflation: float
 
@@ -409,7 +408,6 @@ def simulate_path(
 
     depleted_any_time = False
     terminal_depleted = False
-    ss_only_any_time  = False
 
     for age, equity_return, inflation in zip(ages, equity_series, inflation_series):
 
@@ -538,13 +536,10 @@ def simulate_path(
 
         if (
             age >= cfg.retirement_age
-            and total_wealth <= 0.0
-            and actual_spending > 0.0
-            and ss_income_this_year >= actual_spending
+            and cfg.cash_wedge_years > 0.0
+            and not wedge_retired
+            and wedge_cash <= 0.0
         ):
-            ss_only_any_time = True
-
-        if cfg.cash_wedge_years > 0.0 and not wedge_retired and wedge_cash <= 0.0:
             wedge_depleted = True
 
         terminal_depleted = year_depleted
@@ -567,12 +562,18 @@ def simulate_path(
         if len(recent_returns) > 5:
             recent_returns.pop(0)
 
+    # Wedge depleted: only if wedge was never retired and is 0 at end of simulation
+    final_wedge_depleted = (
+        cfg.cash_wedge_years > 0.0
+        and not wedge_retired
+        and wedge_cash <= 0.0
+    )
+
     return SimulationPath(
         years=records,
         depleted_any_time=depleted_any_time,
         terminal_depleted=terminal_depleted,
-        ss_only_any_time=ss_only_any_time,
-        wedge_depleted=wedge_depleted,
+        wedge_depleted=final_wedge_depleted,
         final_cumulative_inflation=inflation_index,
     )
 
@@ -595,14 +596,13 @@ def compute_percentile_rows(results_by_age: Dict[int, List[float]]) -> Dict[int,
 def run_simulation(
     cfg: SimulationConfig,
     force_bad_opening: bool = False,
-) -> Tuple[List[int], List[List[int]], Dict[int, Dict[str, float]], float, float, float, float, float]:
+) -> Tuple[List[int], List[List[int]], Dict[int, Dict[str, float]], float, float, float, float]:
     ages   = list(range(cfg.starting_age, cfg.end_age + 1))
     matrix: List[List[int]] = []
     by_age: Dict[int, List[float]] = {age: [] for age in ages}
 
     depleted_any_time_count  = 0
     terminal_depleted_count  = 0
-    ss_only_any_time_count   = 0
     wedge_depleted_count     = 0
     inflation_factors:         List[float] = []
 
@@ -616,7 +616,6 @@ def run_simulation(
 
         if path.depleted_any_time:   depleted_any_time_count += 1
         if path.terminal_depleted:   terminal_depleted_count += 1
-        if path.ss_only_any_time:    ss_only_any_time_count  += 1
         if path.wedge_depleted:      wedge_depleted_count    += 1
         inflation_factors.append(path.final_cumulative_inflation)
 
@@ -627,7 +626,6 @@ def run_simulation(
         percentile_rows,
         depleted_any_time_count / cfg.simulations,
         terminal_depleted_count / cfg.simulations,
-        ss_only_any_time_count  / cfg.simulations,
         wedge_depleted_count    / cfg.simulations,
         percentile(inflation_factors, 50),
     )
@@ -660,7 +658,6 @@ def _print_summary_block(
     matrix:                     Sequence[Sequence[int]],
     depleted_any_time_rate:     float,
     terminal_depleted_rate:     float,
-    ss_only_any_time_rate:      float,
     wedge_depletion_rate:       float,
     median_cumulative_inflation: float,
     label:                      str = "",
@@ -684,8 +681,6 @@ def _print_summary_block(
     print()
     print(f" Depleted anytime   : {depleted_any_time_rate * 100:.1f}%")
     print(f" Depleted at {end_age}   : {terminal_depleted_rate * 100:.1f}%")
-    if cfg.social_security_annual > 0.0:
-        print(f" SS-only anytime    : {ss_only_any_time_rate * 100:.1f}%")
     if cfg.cash_wedge_years > 0.0:
         print(f" Wedge depleted     : {wedge_depletion_rate * 100:.1f}%")
     print()
@@ -708,14 +703,13 @@ def print_summary(
     matrix:                     Sequence[Sequence[int]],
     depleted_any_time_rate:     float,
     terminal_depleted_rate:     float,
-    ss_only_any_time_rate:      float,
     wedge_depletion_rate:       float,
     median_cumulative_inflation: float,
 ) -> None:
     _print_summary_block(
         cfg, ages, matrix,
         depleted_any_time_rate, terminal_depleted_rate,
-        ss_only_any_time_rate, wedge_depletion_rate,
+        wedge_depletion_rate,
         median_cumulative_inflation,
         label="MONTE CARLO SIMULATION SUMMARY — Anchored Block Bootstrap",
     )
@@ -741,7 +735,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     # --- Main run ---
     (ages, matrix, percentile_rows,
      depleted_any_time_rate, terminal_depleted_rate,
-     ss_only_any_time_rate, wedge_depletion_rate,
+     wedge_depletion_rate,
      median_cumulative_inflation) = run_simulation(cfg, force_bad_opening=False)
 
     results_csv = os.path.join(script_dir, "portfolio_simulation.csv")
@@ -755,7 +749,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     print_summary(
         cfg, ages, matrix,
         depleted_any_time_rate, terminal_depleted_rate,
-        ss_only_any_time_rate, wedge_depletion_rate,
+        wedge_depletion_rate,
         median_cumulative_inflation,
     )
 
@@ -765,7 +759,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         print()
         (s_ages, s_matrix, _s_pct,
          s_dep_any, s_dep_term,
-         s_ss_only, s_wedge,
+         s_wedge,
          s_inf) = run_simulation(cfg, force_bad_opening=True)
 
         stress_pct_csv = os.path.join(script_dir, "portfolio_percentiles_stress.csv")
@@ -774,7 +768,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
         _print_summary_block(
             cfg, s_ages, s_matrix,
-            s_dep_any, s_dep_term, s_ss_only, s_wedge, s_inf,
+            s_dep_any, s_dep_term, s_wedge, s_inf,
             label=(
                 f"STRESS SCENARIO — Worst {cfg.stress_first_n_years}-Year Opening Block "
                 f"(bottom-decile historical windows)"
