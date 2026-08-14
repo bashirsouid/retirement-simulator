@@ -29,43 +29,21 @@ try:
 except ModuleNotFoundError as exc:  # pragma: no cover
     raise SystemExit("Python 3.11+ is required (tomllib missing).") from exc
 
-# ---------------------------------------------------------------------------
-# Historical data: MSCI World gross total returns 1970-2023 (54 years).
-# Source: MSCI / Wikipedia — includes reinvested dividends, USD terms.
-# Raw geo mean ~9.7%; paths are shifted to target_equity_cagr at runtime.
-#
-# CPI: US CPI-U annual-average percentage changes, 1970-2023 (BLS).
-# Both arrays are index-aligned: index 0 = 1970, index 53 = 2023.
-# ---------------------------------------------------------------------------
 MSCI_WORLD_ANNUAL: List[float] = [
-    # 1970   1971    1972    1973    1974    1975    1976    1977    1978    1979
     -0.0198, 0.1956, 0.2355,-0.1451,-0.2448, 0.3450, 0.1471, 0.0500, 0.1822, 0.1267,
-    # 1980   1981    1982    1983    1984    1985    1986    1987    1988    1989
      0.2772,-0.0330, 0.1127, 0.2328, 0.0577, 0.4177, 0.4280, 0.1676, 0.2395, 0.1719,
-    # 1990   1991    1992    1993    1994    1995    1996    1997    1998    1999
     -0.1652, 0.1897,-0.0466, 0.2313, 0.0558, 0.2132, 0.1400, 0.1623, 0.2480, 0.2534,
-    # 2000   2001    2002    2003    2004    2005    2006    2007    2008    2009
     -0.1292,-0.1652,-0.1954, 0.3376, 0.1525, 0.1002, 0.2065, 0.0957,-0.4033, 0.3079,
-    # 2010   2011    2012    2013    2014    2015    2016    2017    2018    2019
      0.1234,-0.0502, 0.1654, 0.2737, 0.0550,-0.0032, 0.0815, 0.2307,-0.0820, 0.2840,
-    # 2020   2021    2022    2023
      0.1650, 0.2235,-0.1773, 0.2442,
 ]
 
 CPI_ANNUAL: List[float] = [
-    # US CPI-U annual-average percentage changes, 1970--2023 (BLS), aligned
-    # with MSCI_WORLD_ANNUAL above.  Do not substitute a Dec/Dec series here.
-    # 1970   1971    1972    1973    1974    1975    1976    1977    1978    1979
      0.055,  0.033,  0.034,  0.087,  0.124,  0.070,  0.049,  0.067,  0.076,  0.113,
-    # 1980   1981    1982    1983    1984    1985    1986    1987    1988    1989
      0.135,  0.103,  0.061,  0.032,  0.043,  0.036,  0.019,  0.037,  0.041,  0.048,
-    # 1990   1991    1992    1993    1994    1995    1996    1997    1998    1999
      0.054,  0.042,  0.030,  0.030,  0.026,  0.028,  0.029,  0.023,  0.016,  0.022,
-    # 2000   2001    2002    2003    2004    2005    2006    2007    2008    2009
      0.034,  0.028,  0.016,  0.023,  0.027,  0.034,  0.032,  0.029,  0.038, -0.004,
-    # 2010   2011    2012    2013    2014    2015    2016    2017    2018    2019
      0.016,  0.032,  0.021,  0.015,  0.016,  0.001,  0.013,  0.021,  0.024,  0.018,
-    # 2020   2021    2022    2023
      0.012,  0.047,  0.080,  0.041,
 ]
 
@@ -83,6 +61,7 @@ DEFAULT_TARGET_EQUITY_CAGR = 0.07
 DEFAULT_TARGET_INFLATION   = 0.03
 
 DEFAULT_GUARDRAIL_CEILING = 1.20
+DEFAULT_GUARDRAIL_RESTORE = 1.00
 DEFAULT_GUARDRAIL_CUT     = 0.10
 DEFAULT_STRESS_PERCENTILE = 0.10
 DEFAULT_STRESS_MIN_WINDOWS = 3
@@ -90,7 +69,6 @@ DEFAULT_MEDICARE_AGE = 65
 
 
 def _shift_to_target_anchored(series: List[float], target_cagr: float, global_log_mean: float) -> List[float]:
-    """Shift each series to target_cagr while preserving shocks relative to GLOBAL historical mean."""
     if not series:
         return series
     target_log = math.log1p(target_cagr)
@@ -103,7 +81,6 @@ def _shift_to_target_anchored(series: List[float], target_cagr: float, global_lo
 
 
 def _worst_block_starts(n_years: int, bottom_quartile: bool = True) -> List[int]:
-    """Return start indices whose n_years cumulative return falls in the bottom tail."""
     n_hist = len(MSCI_WORLD_ANNUAL)
     if n_years < 1 or n_years > n_hist:
         return list(range(max(n_hist - 1, 1)))
@@ -249,7 +226,6 @@ def bootstrap_historical_series(
     rng: random.Random,
     force_bad_opening: bool = False,
 ) -> Tuple[List[float], List[float]]:
-    """Stitch random historical blocks, then apply anchored drift shift."""
     horizon = cfg.end_age - cfg.starting_age + 1
     n_hist  = len(MSCI_WORLD_ANNUAL)
     sizes   = [s for s in cfg.bootstrap_block_sizes if 1 <= s <= n_hist]
@@ -329,23 +305,34 @@ def build_withdrawal(
     return max(spend, 0.0)
 
 
-def apply_guardrail_cut(
-    base_spending:          float,
-    actual_spending:        float,
-    total_assets:           float,
+def apply_guardrail(
+    lifestyle_base: float,
+    base_spending: float,
+    actual_spending: float,
+    total_assets: float,
     reference_withdrawal_rate: Optional[float],
-) -> Tuple[float, float, Optional[float]]:
-    """Cut spending if WR exceeds ceiling. No raise — spending grows only via inflation."""
+) -> Tuple[float, float, Optional[float], bool]:
+    """Cut lifestyle in a downturn; restore it when the WR is healthy again.
+
+    Returns (base_spending, actual_spending, reference_wr, restored).
+    restored=True means the caller should recompute actual_spending from the
+    restored base (volatility flex on the full lifestyle).
+    """
     if total_assets <= 0.0:
-        return base_spending, actual_spending, reference_withdrawal_rate
+        return base_spending, actual_spending, reference_withdrawal_rate, False
     if reference_withdrawal_rate is None:
-        reference_withdrawal_rate = max(base_spending / total_assets, 0.0)
-    if reference_withdrawal_rate > 0.0:
-        current_wr = actual_spending / total_assets
-        if current_wr > reference_withdrawal_rate * DEFAULT_GUARDRAIL_CEILING:
-            base_spending   *= 1.0 - DEFAULT_GUARDRAIL_CUT
-            actual_spending  = min(actual_spending, base_spending)
-    return base_spending, actual_spending, reference_withdrawal_rate
+        reference_withdrawal_rate = max(lifestyle_base / total_assets, 0.0)
+    if reference_withdrawal_rate <= 0.0:
+        return base_spending, actual_spending, reference_withdrawal_rate, False
+
+    current_wr = actual_spending / total_assets
+    if current_wr > reference_withdrawal_rate * DEFAULT_GUARDRAIL_CEILING:
+        base_spending   *= 1.0 - DEFAULT_GUARDRAIL_CUT
+        actual_spending  = min(actual_spending, base_spending)
+        return base_spending, actual_spending, reference_withdrawal_rate, False
+    if current_wr <= reference_withdrawal_rate * DEFAULT_GUARDRAIL_RESTORE and base_spending < lifestyle_base:
+        return lifestyle_base, actual_spending, reference_withdrawal_rate, True
+    return base_spending, actual_spending, reference_withdrawal_rate, False
 
 
 def simulate_path(
@@ -369,6 +356,7 @@ def simulate_path(
     wedge_depleted    = False
 
     inflation_index   = 1.0
+    lifestyle_base    = 0.0
     base_spending     = 0.0
     social_security_income = 0.0
     reference_withdrawal_rate:       Optional[float] = None
@@ -394,8 +382,9 @@ def simulate_path(
         actual_spending = 0.0
 
         if age >= cfg.retirement_age:
-            if base_spending == 0.0:
-                base_spending = cfg.annual_spending * inflation_index
+            if lifestyle_base == 0.0:
+                lifestyle_base = cfg.annual_spending * inflation_index
+                base_spending = lifestyle_base
 
             if (
                 cfg.cash_wedge_years > 0.0
@@ -413,12 +402,15 @@ def simulate_path(
                 base_spending, equity_return, cfg.target_equity_cagr, cfg.spending_volatility
             )
 
-            base_spending, actual_spending, reference_withdrawal_rate = apply_guardrail_cut(
-                base_spending, actual_spending, total_assets_before_spending, reference_withdrawal_rate
+            base_spending, actual_spending, reference_withdrawal_rate, restored = apply_guardrail(
+                lifestyle_base, base_spending, actual_spending,
+                total_assets_before_spending, reference_withdrawal_rate,
             )
+            if restored:
+                actual_spending = build_withdrawal(
+                    base_spending, equity_return, cfg.target_equity_cagr, cfg.spending_volatility
+                )
 
-            # Insurance / other pre-Medicare costs are not discretionary, so they
-            # are added after the lifestyle guardrail and are not cut with it.
             if age < cfg.medicare_age and cfg.pre_medicare_extra_annual > 0.0:
                 actual_spending += cfg.pre_medicare_extra_annual * inflation_index
 
@@ -487,7 +479,21 @@ def simulate_path(
 
         portfolio_wealth = max(portfolio_wealth, 0.0)
         wedge_cash       = max(wedge_cash, 0.0)
-        total_wealth     = portfolio_wealth + wedge_cash
+
+        portfolio_return = (
+            cfg.equity_allocation * equity_return
+            + (1.0 - cfg.equity_allocation) * bond_return
+        )
+        portfolio_wealth *= 1.0 + portfolio_return
+        if wedge_cash > 0.0:
+            cash_return = cfg.cash_return_override if cfg.cash_return_override is not None else inflation
+            wedge_cash *= 1.0 + cash_return
+
+        total_wealth = portfolio_wealth + wedge_cash
+        if year_depleted:
+            terminal_depleted = True
+        else:
+            terminal_depleted = age >= cfg.retirement_age and total_wealth <= 0.0
 
         if (
             age >= cfg.retirement_age
@@ -496,8 +502,6 @@ def simulate_path(
             and wedge_cash <= 0.0
         ):
             wedge_depleted = True
-
-        terminal_depleted = year_depleted
 
         records.append(YearState(
             age=age,
@@ -513,15 +517,9 @@ def simulate_path(
             social_security_income=ss_income_this_year,
         ))
 
-        portfolio_return = (
-            cfg.equity_allocation * equity_return
-            + (1.0 - cfg.equity_allocation) * bond_return
-        )
-        portfolio_wealth *= 1.0 + portfolio_return
-        if wedge_cash > 0.0:
-            cash_return = cfg.cash_return_override if cfg.cash_return_override is not None else inflation
-            wedge_cash *= 1.0 + cash_return
         inflation_index *= 1.0 + inflation
+        if lifestyle_base > 0.0:
+            lifestyle_base *= 1.0 + inflation
         if base_spending > 0.0:
             base_spending *= 1.0 + inflation
 
@@ -625,7 +623,7 @@ def _print_summary_block(
 ) -> None:
     final_values = [row[-1] for row in matrix]
     end_age      = ages[-1]
-    years        = cfg.end_age - cfg.starting_age
+    years        = cfg.end_age - cfg.starting_age + 1
     real_final   = real_percentile_rows[end_age]
 
     if label:
@@ -646,7 +644,8 @@ def _print_summary_block(
     if cfg.cash_wedge_years > 0.0:
         print(f" Wedge depleted     : {wedge_depletion_rate * 100:.1f}%")
     print()
-    print(f" {'PORTFOLIO AT AGE ' + str(end_age):<30}{'NOMINAL':>18}{"TODAY'S $":>18}")
+    today_hdr = "TODAY'S $"
+    print(f" {'PORTFOLIO AT AGE ' + str(end_age):<30}{'NOMINAL':>18}{today_hdr:>18}")
     print("-" * 75)
     for lbl, key in [
         ("99th", "p99"), ("95th", "p95"), ("90th", "p90"), ("75th", "p75"),
@@ -732,9 +731,6 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         print(f"Stress results saved to  : {stress_sim_csv}")
         print(f"Stress percentiles saved : {stress_pct_csv}")
         print(f"Stress real $ percentiles: {stress_real_csv}")
-
-        write_percentiles_csv(stress_pct_csv, s_ages, _s_pct)
-        print(f"Stress percentiles: {stress_pct_csv}")
 
         _print_summary_block(
             cfg, s_ages, s_matrix, s_real,
