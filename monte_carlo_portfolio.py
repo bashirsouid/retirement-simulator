@@ -326,9 +326,10 @@ def apply_guardrail(
         return base_spending, actual_spending, reference_withdrawal_rate, False
 
     current_wr = actual_spending / total_assets
+    floor = lifestyle_base * (1.0 - DEFAULT_GUARDRAIL_CUT)  # Percent of full lifestyle
     if current_wr > reference_withdrawal_rate * DEFAULT_GUARDRAIL_CEILING:
-        base_spending   *= 1.0 - DEFAULT_GUARDRAIL_CUT
-        actual_spending  = min(actual_spending, base_spending)
+        base_spending = floor
+        actual_spending = min(actual_spending, base_spending)
         return base_spending, actual_spending, reference_withdrawal_rate, False
     if current_wr <= reference_withdrawal_rate * DEFAULT_GUARDRAIL_RESTORE and base_spending < lifestyle_base:
         return lifestyle_base, actual_spending, reference_withdrawal_rate, True

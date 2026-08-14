@@ -103,8 +103,7 @@ bootstrap_block_sizes = [4, 5, 6, 8]
 
 Always on. This is belt-tightening through a downturn, not a permanent lifestyle change:
 
-- If the withdrawal rate exceeds **120%** of the first retirement year's rate, core spending is cut 10% (pre-Medicare extra is not cut).
-- If the withdrawal rate later falls back to the **original** rate or below, core spending is restored to the inflation-adjusted lifestyle.
+- If WR exceeds 120% of the first retirement year's rate, core spending is cut to **90% of the inflation-adjusted lifestyle** (a single floor, not stacked cuts). When WR falls back to the original rate or below, spending is restored to 100%.
 - Between those two marks, the current (possibly cut) spending stays put, so the rule does not chatter every year.
 
 Depletion rates assume you will accept those temporary cuts.

@@ -569,6 +569,17 @@ class GuardrailTests(unittest.TestCase):
         self.assertAlmostEqual(path.years[1].base_spending, 18_000.0, places=6)
         self.assertAlmostEqual(path.years[1].actual_spending, 23_000.0, places=6)
 
+    def test_guardrail_is_capped_and_does_not_compound(self):
+        cfg = make_cfg(
+            starting_age=60, retirement_age=60, end_age=62,
+            starting_wealth=100_000.0, annual_spending=70_000.0, monthly_contribution=0.0,
+        )
+        with override_bootstrap([-0.50, -0.50, 0.0], [0.0, 0.0, 0.0]):
+            path = sim.simulate_path(cfg, seed=0)
+        # 10% cut off the lifestyle (70k -> 63k) should apply once and not compound
+        self.assertAlmostEqual(path.years[1].base_spending, 63_000.0, places=6)
+        self.assertAlmostEqual(path.years[2].base_spending, 63_000.0, places=6)
+
 
 class StressTests(unittest.TestCase):
 
