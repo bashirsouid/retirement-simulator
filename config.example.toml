@@ -1,136 +1,80 @@
 # =============================================================================
-# Monte Carlo Portfolio Simulator — Configuration
-# =============================================================================
-# All monetary values are in TODAY'S dollars. The simulator inflates spending,
-# Social Security, pre-Medicare extras, one-time events, and (optionally)
-# contributions using the bootstrapped CPI path.
-#
-# Copy to config.toml and edit:  cp config.example.toml config.toml
+# Copy to config.toml and edit. All money is TODAY'S dollars; the sim inflates
+# spending, SS, pre-Medicare extra, events, and (if enabled) contributions.
 # Run: ./run_simulation.sh
 # =============================================================================
 
-
-# -----------------------------------------------------------------------------
-# Personal / Demographic
-# -----------------------------------------------------------------------------
-
-starting_age = 50
-retirement_age = 60
-end_age = 100
+# --- Ages ---
+starting_age   = 50   # your age now
+retirement_age = 60   # last working year is retirement_age; spending starts here
+end_age        = 100  # plan through this age (every path runs the full horizon)
 
 
-# -----------------------------------------------------------------------------
-# Wealth & Contributions
-# -----------------------------------------------------------------------------
+# --- Portfolio & saving ---
+starting_wealth = 250000          # investable assets only (not personal home equity)
+monthly_contribution = 500        # stops at retirement_age
+inflate_contributions = true      # true = raise contributions with CPI each working year
 
-starting_wealth = 250000
-
-# Contributions stop at retirement age
-monthly_contribution = 500
-
-# Grow monthly_contribution with simulated inflation each working year.
-# true  = contributions keep pace with prices (typical for a paycheck)
-# false = the dollar amount you typed is used every year, unadjusted
-inflate_contributions = true
-
-# Core lifestyle spending in TODAY'S dollars. Inflated each year after
-# retirement. Do not include pre-Medicare health insurance here if you
-# set pre_medicare_extra_annual below.
+# Core lifestyle spend. Inflated after retirement. Exclude pre-Medicare premiums
+# if you set pre_medicare_extra_annual below.
 annual_spending = 60000
 
-# Discretionary spending flexibility in good/bad equity years (0.05 = ±5%)
-spending_volatility = 0.05
-
-# Annual charitable giving as a fraction of remaining portfolio.
-# Some people use this for various reasons.
-charity_pct = 0.00
+spending_volatility = 0.05        # ± this fraction in good/bad equity years
+charity_pct = 0.00                # fraction of portfolio given each year; 0 disables
 
 
-# -----------------------------------------------------------------------------
-# Taxes on portfolio withdrawals
-# -----------------------------------------------------------------------------
-# Applied only to the portfolio draw after Social Security has offset spending.
-#   0.00 = you already included tax in annual_spending
-#   0.10 to 0.15 = typical if annual_spending is a "lifestyle" number and
-#                  most withdrawals will come from pretax accounts
-# There is no full tax engine. If your tax picture is unusual, leave this
-# at 0.0 and fold taxes into annual_spending yourself.
+# --- Withdrawal tax ---
+# Tax on the portfolio draw after SS has offset spending.
+# 0.00 = tax is already inside annual_spending
+# 0.10–0.15 = typical if annual_spending is a pretax lifestyle number
 withdrawal_tax_rate = 0.0
 
 
-# -----------------------------------------------------------------------------
-# Pre-Medicare health insurance
-# -----------------------------------------------------------------------------
-# Extra annual spending (TODAY'S dollars) while you are retired and younger
-# than medicare_age. Use this for marketplace / COBRA premiums. It is added
-# on top of annual_spending and is not cut by guardrails.
-# Set to 0 if you retire at or after Medicare age, or if that cost is
-# already inside annual_spending.
+# --- Pre-Medicare health insurance ---
+# Added only while retired and younger than medicare_age. Not cut by guardrails.
+# Look up plans: https://www.healthcare.gov/
+# Unsubsidized silver in the 60s is often ~$8k–$15k/yr per person.
+# After premium tax credits many people pay much less — use your quote.
+# 0 if you retire at/after 65 or already included it in annual_spending.
 medicare_age = 65
 pre_medicare_extra_annual = 12000
 
 
-# -----------------------------------------------------------------------------
-# Asset Allocation
-# -----------------------------------------------------------------------------
-
-# Fraction of portfolio held in equities. Remainder uses bond_return_override.
-equity_allocation = 0.60
+# --- Allocation ---
+equity_allocation = 0.60          # rest needs bond_return_override
+bond_return_override = 0.03       # required if equity_allocation < 1; fixed nominal, not a bond index
 
 
-# -----------------------------------------------------------------------------
-# Social Security
-# -----------------------------------------------------------------------------
-
+# --- Social Security ---
+# Benefit in TODAY'S dollars at the claiming age you pick (not the future
+# inflated check). Get your estimate: https://www.ssa.gov/myaccount/
+# Use the line for this claiming age (62 / FRA / 70).
 social_security_start_age = 67
-social_security_annual = 30000
+social_security_annual    = 30000
 
 
-# -----------------------------------------------------------------------------
-# Simulation Scale
-# -----------------------------------------------------------------------------
-
-simulations = 10000
+# --- Run size ---
+simulations = 10000               # 10k is enough for stable percentiles
 
 
-# -----------------------------------------------------------------------------
-# Return & Inflation Assumptions
-# -----------------------------------------------------------------------------
-# Fund fees are not a separate input. Subtract your all-in expense ratio
-# from target_equity_cagr (for example 0.07 - 0.0015 = 0.0685). That is
-# more accurate than a single fee field when you hold several funds.
-
-target_equity_cagr = 0.07
-target_inflation = 0.03
+# --- Return assumptions ---
+# No separate fee field: subtract all-in ER from the equity CAGR
+# (e.g. 0.07 - 0.0015 = 0.0685).
+target_equity_cagr = 0.07         # nominal; ~4% real at 3% inflation
+target_inflation   = 0.03
 
 
-# -----------------------------------------------------------------------------
-# Cash Wedge Settings
-# -----------------------------------------------------------------------------
-
-cash_wedge_years = 0
+# --- Cash wedge (optional) ---
+cash_wedge_years = 0              # years of core spending held in cash; 0 disables
 
 
-# -----------------------------------------------------------------------------
-# Block Bootstrap Settings
-# -----------------------------------------------------------------------------
-# Short blocks recombine history more freely while still keeping multi-year
-# crash sequences together. Longer 30-40 year blocks from a 54-year sample
-# are almost the same few overlapping lifetimes.
-
-bootstrap_block_sizes = [4, 5, 6, 8]
-
-# Stress the first N retirement years with a bad historical block.
-stress_first_n_years = 10
+# --- Bootstrap ---
+bootstrap_block_sizes = [4, 5, 6, 8]   # historical slice lengths, years
+stress_first_n_years = 10              # 0 disables the bad-opening-years run
 
 
-# -----------------------------------------------------------------------------
-# One-Time Financial Events
-# -----------------------------------------------------------------------------
-# Lump-sum additions (positive) or withdrawals (negative) at specific ages.
-# Amounts are TODAY'S dollars and are inflated to the event year.
-# Examples: "55" = -50000 (home renovation), "65" = 200000 (inheritance)
-
+# --- One-time events ---
+# Today's dollars, inflated to that age. + inflow, − outflow.
 [one_time_events]
 "55" = -50000
 "65" = 200000
