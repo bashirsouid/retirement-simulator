@@ -421,6 +421,7 @@ def simulate_path(
     portfolio_wealth  = cfg.starting_wealth
     wedge_cash        = 0.0
     wedge_retired     = cfg.cash_wedge_years <= 0.0
+    wedge_initialized = cfg.cash_wedge_years <= 0.0
     wedge_depleted    = False
 
     inflation_index   = 1.0
@@ -443,18 +444,14 @@ def simulate_path(
         # the first retirement withdrawal.
         contribution = cfg.monthly_contribution * 12.0 if age < cfg.retirement_age else 0.0
 
-        # Social Security
-        if cfg.social_security_annual > 0.0:
-            if age == cfg.social_security_start_age:
-                social_security_income = cfg.social_security_annual * inflation_index
-            elif age > cfg.social_security_start_age and social_security_income == 0.0:
-                # The simulation can begin after benefits have already started.
-                # At the beginning of age N, N - starting_age prior annual CPI
-                # changes have occurred.
-                social_security_income = cfg.social_security_annual * inflation_index
-            elif age > cfg.social_security_start_age and social_security_income > 0.0:
-                social_security_income *= (1.0 + inflation)
-        ss_income_this_year = social_security_income if age >= cfg.social_security_start_age else 0.0
+        # Social Security is specified in today's dollars.  Apply the
+        # start-of-year inflation index every year so COLA matches spending
+        # and one-time events, including when the sim starts after claim age.
+        if cfg.social_security_annual > 0.0 and age >= cfg.social_security_start_age:
+            social_security_income = cfg.social_security_annual * inflation_index
+        else:
+            social_security_income = 0.0
+        ss_income_this_year = social_security_income
 
         actual_spending = 0.0
 
@@ -462,17 +459,18 @@ def simulate_path(
             # Inflate base spending
             if base_spending == 0.0:
                 base_spending = cfg.annual_spending * inflation_index
-            else:
-                # Inflation for age N is applied after this age's cash flow.
-                # Spending for this year therefore uses the prior index.
-                base_spending = base_spending
 
             # Fund wedge at retirement
-            if cfg.cash_wedge_years > 0.0 and wedge_cash == 0.0 and age == cfg.retirement_age:
+            if (
+                cfg.cash_wedge_years > 0.0
+                and not wedge_initialized
+                and age >= cfg.retirement_age
+            ):
                 wedge_target     = min(base_spending * cfg.cash_wedge_years, portfolio_wealth)
                 portfolio_wealth -= wedge_target
                 wedge_cash       += wedge_target
                 wedge_retired     = False
+                wedge_initialized = True
 
             # Spending (with volatility flex)
             total_assets_before_spending = portfolio_wealth + wedge_cash
@@ -594,6 +592,12 @@ def simulate_path(
             cash_return = cfg.cash_return_override if cfg.cash_return_override is not None else inflation
             wedge_cash *= 1.0 + cash_return
         inflation_index *= 1.0 + inflation
+        # Carry last year's realized inflation into next year's spending.
+        # Doing it here (not at the start of the next year) keeps the first
+        # retirement withdrawal on the start-of-year index and preserves
+        # any guardrail cut in real terms.
+        if base_spending > 0.0:
+            base_spending *= 1.0 + inflation
 
         recent_returns.append(equity_return)
         if len(recent_returns) > 5:
