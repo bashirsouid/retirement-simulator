@@ -23,8 +23,10 @@ end_age = 100
 # Wealth & Contributions
 # -----------------------------------------------------------------------------
 
-starting_wealth = 5000000
-monthly_contribution = 3000
+starting_wealth = 250000
+
+# Contributions stop at retirement age
+monthly_contribution = 500
 
 # Grow monthly_contribution with simulated inflation each working year.
 # true  = contributions keep pace with prices (typical for a paycheck)
@@ -39,8 +41,9 @@ annual_spending = 60000
 # Discretionary spending flexibility in good/bad equity years (0.05 = ±5%)
 spending_volatility = 0.05
 
-# Annual charitable giving as a fraction of remaining portfolio
-charity_pct = 0.01
+# Annual charitable giving as a fraction of remaining portfolio.
+# Some people use this for various reasons.
+charity_pct = 0.00
 
 
 # -----------------------------------------------------------------------------
@@ -64,7 +67,7 @@ withdrawal_tax_rate = 0.0
 # Set to 0 if you retire at or after Medicare age, or if that cost is
 # already inside annual_spending.
 medicare_age = 65
-pre_medicare_extra_annual = 0
+pre_medicare_extra_annual = 12000
 
 
 # -----------------------------------------------------------------------------
@@ -72,7 +75,7 @@ pre_medicare_extra_annual = 0
 # -----------------------------------------------------------------------------
 
 # Fraction of portfolio held in equities. Remainder uses bond_return_override.
-equity_allocation = 0.99
+equity_allocation = 0.60
 
 
 # -----------------------------------------------------------------------------
