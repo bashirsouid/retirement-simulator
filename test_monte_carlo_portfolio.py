@@ -12,7 +12,7 @@ from statistics import fmean
 
 import monte_carlo_portfolio as sim
 
-DEFAULT_BLOCK_SIZES = (5, 10, 15, 20)
+DEFAULT_BLOCK_SIZES = (4, 5, 6, 8)
 
 
 def make_cfg(**overrides):
@@ -39,6 +39,10 @@ def make_cfg(**overrides):
         one_time_events={},
         bootstrap_block_sizes=DEFAULT_BLOCK_SIZES,
         stress_first_n_years=0,
+        withdrawal_tax_rate=0.0,
+        inflate_contributions=True,
+        medicare_age=65,
+        pre_medicare_extra_annual=0.0,
     )
     data.update(overrides)
     return sim.SimulationConfig(**data)
@@ -162,6 +166,9 @@ class BootstrapTests(unittest.TestCase):
             self.assertEqual(len(eq), horizon)
             self.assertEqual(len(inf), horizon)
 
+    def test_default_block_sizes_are_short(self):
+        self.assertEqual(sim.DEFAULT_BLOCK_SIZES, (4, 5, 6, 8))
+
     def test_values_come_from_historical_arrays(self):
         cfg = make_cfg(end_age=80)
         eq, inf = sim.bootstrap_historical_series(cfg, random.Random(42))
@@ -235,6 +242,10 @@ class ConfigValidationTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "cash_wedge_years"):
             sim.validate_config(make_cfg(cash_wedge_years=-1.0))
 
+    def test_tax_rate_must_be_below_one(self):
+        with self.assertRaisesRegex(ValueError, "withdrawal_tax_rate"):
+            sim.validate_config(make_cfg(withdrawal_tax_rate=1.0))
+
     def test_load_config_validates_non_equity_allocation(self):
         text = _minimal_toml(equity_allocation=0.8)
         with tempfile.TemporaryDirectory() as tmp:
@@ -250,6 +261,18 @@ class ConfigValidationTests(unittest.TestCase):
             path.write_text(text)
             cfg = sim.load_config(str(path))
         self.assertEqual(cfg.one_time_events, {55: -50_000.0, 65: 200_000.0})
+
+    def test_load_config_defaults_new_planning_fields(self):
+        text = _minimal_toml()
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.toml"
+            path.write_text(text)
+            cfg = sim.load_config(str(path))
+        self.assertEqual(cfg.withdrawal_tax_rate, 0.0)
+        self.assertTrue(cfg.inflate_contributions)
+        self.assertEqual(cfg.medicare_age, 65)
+        self.assertEqual(cfg.pre_medicare_extra_annual, 0.0)
+        self.assertEqual(cfg.bootstrap_block_sizes, sim.DEFAULT_BLOCK_SIZES)
 
     def test_load_config_ignores_unknown_keys(self):
         text = _minimal_toml() + "avg_invest_return = 0.99\n"
@@ -426,6 +449,34 @@ class SimulatePathTests(unittest.TestCase):
         self.assertAlmostEqual(path.years[0].contribution, 1_200.0, places=6)
         self.assertAlmostEqual(path.years[1].contribution, 0.0, places=6)
 
+    def test_contributions_inflate_when_enabled(self):
+        cfg = make_cfg(
+            starting_age=38,
+            retirement_age=40,
+            end_age=39,
+            starting_wealth=0.0,
+            monthly_contribution=100.0,
+            inflate_contributions=True,
+        )
+        with override_bootstrap([0.0, 0.0], [0.10, 0.00]):
+            path = sim.simulate_path(cfg, seed=0)
+        self.assertAlmostEqual(path.years[0].contribution, 1_200.0, places=6)
+        self.assertAlmostEqual(path.years[1].contribution, 1_320.0, places=6)
+
+    def test_contributions_stay_nominal_when_disabled(self):
+        cfg = make_cfg(
+            starting_age=38,
+            retirement_age=40,
+            end_age=39,
+            starting_wealth=0.0,
+            monthly_contribution=100.0,
+            inflate_contributions=False,
+        )
+        with override_bootstrap([0.0, 0.0], [0.10, 0.00]):
+            path = sim.simulate_path(cfg, seed=0)
+        self.assertAlmostEqual(path.years[0].contribution, 1_200.0, places=6)
+        self.assertAlmostEqual(path.years[1].contribution, 1_200.0, places=6)
+
     def test_zero_inflation_two_year_ledger(self):
         cfg = make_cfg(
             starting_age=60,
@@ -439,6 +490,90 @@ class SimulatePathTests(unittest.TestCase):
             path = sim.simulate_path(cfg, seed=0)
         self.assertAlmostEqual(path.years[0].total_wealth, 90_000.0, places=6)
         self.assertAlmostEqual(path.years[1].total_wealth, 89_000.0, places=6)
+
+    def test_withdrawal_tax_grosses_up_portfolio_draw(self):
+        cfg = make_cfg(
+            starting_age=60,
+            retirement_age=60,
+            end_age=60,
+            starting_wealth=100_000.0,
+            annual_spending=10_000.0,
+            monthly_contribution=0.0,
+            withdrawal_tax_rate=0.20,
+        )
+        with override_bootstrap([0.0], [0.0]):
+            path = sim.simulate_path(cfg, seed=0)
+        self.assertAlmostEqual(path.years[0].actual_spending, 10_000.0, places=6)
+        self.assertAlmostEqual(path.years[0].total_wealth, 87_500.0, places=6)
+
+    def test_zero_tax_matches_untaxed_draw(self):
+        cfg = make_cfg(
+            starting_age=60,
+            retirement_age=60,
+            end_age=60,
+            starting_wealth=100_000.0,
+            annual_spending=10_000.0,
+            monthly_contribution=0.0,
+            withdrawal_tax_rate=0.0,
+        )
+        with override_bootstrap([0.0], [0.0]):
+            path = sim.simulate_path(cfg, seed=0)
+        self.assertAlmostEqual(path.years[0].total_wealth, 90_000.0, places=6)
+
+    def test_pre_medicare_extra_only_before_medicare_age(self):
+        cfg = make_cfg(
+            starting_age=63,
+            retirement_age=63,
+            end_age=66,
+            starting_wealth=1_000_000.0,
+            annual_spending=10_000.0,
+            monthly_contribution=0.0,
+            medicare_age=65,
+            pre_medicare_extra_annual=12_000.0,
+        )
+        with override_bootstrap([0.0, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 0.0]):
+            path = sim.simulate_path(cfg, seed=0)
+        by_age = {yr.age: yr for yr in path.years}
+        self.assertAlmostEqual(by_age[63].actual_spending, 22_000.0, places=6)
+        self.assertAlmostEqual(by_age[64].actual_spending, 22_000.0, places=6)
+        self.assertAlmostEqual(by_age[65].actual_spending, 10_000.0, places=6)
+        self.assertAlmostEqual(by_age[66].actual_spending, 10_000.0, places=6)
+
+    def test_pre_medicare_extra_does_not_apply_while_working(self):
+        cfg = make_cfg(
+            starting_age=60,
+            retirement_age=62,
+            end_age=62,
+            starting_wealth=1_000_000.0,
+            annual_spending=10_000.0,
+            monthly_contribution=0.0,
+            medicare_age=65,
+            pre_medicare_extra_annual=12_000.0,
+        )
+        with override_bootstrap([0.0, 0.0, 0.0], [0.0, 0.0, 0.0]):
+            path = sim.simulate_path(cfg, seed=0)
+        by_age = {yr.age: yr for yr in path.years}
+        self.assertAlmostEqual(by_age[60].actual_spending, 0.0, places=6)
+        self.assertAlmostEqual(by_age[62].actual_spending, 22_000.0, places=6)
+
+    def test_path_real_wealth_uses_own_inflation_index(self):
+        cfg = make_cfg(
+            starting_age=60,
+            retirement_age=60,
+            end_age=61,
+            starting_wealth=110_000.0,
+            annual_spending=10_000.0,
+            monthly_contribution=0.0,
+        )
+        with override_bootstrap([0.0, 0.0], [0.10, 0.00]):
+            path = sim.simulate_path(cfg, seed=0)
+        year1 = path.years[1]
+        self.assertAlmostEqual(year1.cumulative_inflation, 1.10, places=6)
+        self.assertAlmostEqual(
+            sim.real_wealth(year1.total_wealth, year1.cumulative_inflation),
+            year1.total_wealth / 1.10,
+            places=6,
+        )
 
     def test_bond_sleeve_return_is_visible_on_next_opening_balance(self):
         cfg = make_cfg(
@@ -579,6 +714,22 @@ class GuardrailTests(unittest.TestCase):
         self.assertAlmostEqual(path.years[0].base_spending, 20_000.0, places=6)
         self.assertAlmostEqual(path.years[1].base_spending, 20_000.0, places=6)
 
+    def test_pre_medicare_extra_is_not_cut_by_guardrails(self):
+        cfg = make_cfg(
+            starting_age=60,
+            retirement_age=60,
+            end_age=61,
+            starting_wealth=100_000.0,
+            annual_spending=20_000.0,
+            monthly_contribution=0.0,
+            medicare_age=65,
+            pre_medicare_extra_annual=5_000.0,
+        )
+        with override_bootstrap([-0.50, 0.0], [0.0, 0.0]):
+            path = sim.simulate_path(cfg, seed=0)
+        self.assertAlmostEqual(path.years[1].base_spending, 18_000.0, places=6)
+        self.assertAlmostEqual(path.years[1].actual_spending, 23_000.0, places=6)
+
 
 class StressTests(unittest.TestCase):
 
@@ -620,13 +771,14 @@ class RunSimulationTests(unittest.TestCase):
 
     def test_percentiles_monotonically_ordered(self):
         cfg = make_cfg(simulations=200)
-        ages, matrix, pct_rows, *_ = sim.run_simulation(cfg)
+        ages, matrix, pct_rows, real_rows, *_ = sim.run_simulation(cfg)
         for age in ages:
-            row = pct_rows[age]
-            self.assertLessEqual(row["p01"], row["p25"])
-            self.assertLessEqual(row["p25"], row["median"])
-            self.assertLessEqual(row["median"], row["p75"])
-            self.assertLessEqual(row["p75"], row["p99"])
+            for rows in (pct_rows, real_rows):
+                row = rows[age]
+                self.assertLessEqual(row["p01"], row["p25"])
+                self.assertLessEqual(row["p25"], row["median"])
+                self.assertLessEqual(row["median"], row["p75"])
+                self.assertLessEqual(row["p75"], row["p99"])
 
     def test_matrix_shape(self):
         cfg = make_cfg(simulations=50)
@@ -646,7 +798,12 @@ class RunSimulationTests(unittest.TestCase):
 
     def test_run_simulation_return_arity(self):
         result = sim.run_simulation(make_cfg(simulations=5, end_age=50))
-        self.assertEqual(len(result), 7)
+        self.assertEqual(len(result), 8)
+
+    def test_real_percentiles_are_below_nominal_when_inflation_is_positive(self):
+        cfg = make_cfg(simulations=30, end_age=55, target_inflation=0.03)
+        _, _, nom, real, *_ = sim.run_simulation(cfg)
+        self.assertLess(real[55]["median"], nom[55]["median"])
 
 
 if __name__ == "__main__":

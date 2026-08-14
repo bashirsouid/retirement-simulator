@@ -4,14 +4,7 @@
 Uses MSCI World gross total returns (1970-2023) as the historical return
 distribution, sampled in random blocks. Each sampled path is shifted so
 the long-run CAGR matches target_equity_cagr while crash magnitudes are
-preserved exactly (Option 3: anchored shock decomposition).
-
-Sequence-of-returns stress testing (Option 2): when stress_first_n_years > 0,
-a second run forces the opening block to be drawn from the worst historical
-windows, printing a separate stress summary below the main one.
-
-Default block sizes include 30 and 40-year blocks (Option 1) so full
-lost-decade sequences can appear as the opening block.
+preserved relative to the global historical mean.
 
 Default target: 7.0% nominal equity / 3.0% nominal inflation
 ~4.0% real return — in line with Dimson-Marsh-Staunton long-run
@@ -40,10 +33,8 @@ except ModuleNotFoundError as exc:  # pragma: no cover
 # Historical data: MSCI World gross total returns 1970-2023 (54 years).
 # Source: MSCI / Wikipedia — includes reinvested dividends, USD terms.
 # Raw geo mean ~9.7%; paths are shifted to target_equity_cagr at runtime.
-
-# CPI: US annual inflation 1970-2023 (54 years). Source: BLS.
-# Raw geo mean ~3.3%; paths are shifted to target_inflation at runtime.
-
+#
+# CPI: US CPI-U annual-average percentage changes, 1970-2023 (BLS).
 # Both arrays are index-aligned: index 0 = 1970, index 53 = 2023.
 # ---------------------------------------------------------------------------
 MSCI_WORLD_ANNUAL: List[float] = [
@@ -82,15 +73,12 @@ assert len(MSCI_WORLD_ANNUAL) == len(CPI_ANNUAL) == 54, (
     f"MSCI_WORLD_ANNUAL ({len(MSCI_WORLD_ANNUAL)}) and CPI_ANNUAL ({len(CPI_ANNUAL)}) must both be 54"
 )
 
-# Raw historical geometric means (informational only)
 MSCI_WORLD_GEO_MEAN: float = math.exp(fmean(math.log1p(x) for x in MSCI_WORLD_ANNUAL)) - 1.0
 CPI_GEO_MEAN: float = math.exp(fmean(math.log1p(x) for x in CPI_ANNUAL)) - 1.0
-
-# Global log means for anchored shift (Option 3: preserve shocks relative to global mean)
 MSCI_WORLD_GEO_LOG_MEAN: float = fmean(math.log1p(x) for x in MSCI_WORLD_ANNUAL)
 CPI_GEO_LOG_MEAN: float = fmean(math.log1p(x) for x in CPI_ANNUAL)
 
-DEFAULT_BLOCK_SIZES = (5, 10, 15, 20, 30, 40)   # Option 1: wider blocks preserve lost decades
+DEFAULT_BLOCK_SIZES = (4, 5, 6, 8)
 DEFAULT_TARGET_EQUITY_CAGR = 0.07
 DEFAULT_TARGET_INFLATION   = 0.03
 
@@ -98,34 +86,11 @@ DEFAULT_GUARDRAIL_CEILING = 1.20
 DEFAULT_GUARDRAIL_CUT     = 0.10
 DEFAULT_STRESS_PERCENTILE = 0.10
 DEFAULT_STRESS_MIN_WINDOWS = 3
+DEFAULT_MEDICARE_AGE = 65
 
-
-# ---------------------------------------------------------------------------
-# Option 3: anchored shock decomposition
-#
-# Instead of shifting every return value uniformly in log-space, we decompose
-# each historical year into:
-#   drift  = the raw series geometric mean  (the "expected" component)
-#   shock  = r_t - drift                    (the "surprise" component)
-#
-# We then replace the drift with the target CAGR while leaving shocks intact:
-#   r_t_new = target_cagr + shock_t
-#
-# This means a -40% crash year stays a -40% crash year regardless of the
-# target CAGR, instead of being softened by a downward drift shift.
-# ---------------------------------------------------------------------------
 
 def _shift_to_target_anchored(series: List[float], target_cagr: float, global_log_mean: float) -> List[float]:
-    """Shift each series to target_cagr while preserving shocks relative to GLOBAL historical mean.
-    
-    Decomposition in log-space:
-    log(1+r_t) = global_log_mean + shock_t
-    Reconstruction:
-    log(1+r_t_new) = log(1+target_cagr) + shock_t
-    
-    This preserves actual crash magnitudes (e.g., -40% stays ~-40%) while adjusting
-    the overall expected return to target_cagr.
-    """
+    """Shift each series to target_cagr while preserving shocks relative to GLOBAL historical mean."""
     if not series:
         return series
     target_log = math.log1p(target_cagr)
@@ -137,15 +102,11 @@ def _shift_to_target_anchored(series: List[float], target_cagr: float, global_lo
     return out
 
 
-# ---------------------------------------------------------------------------
-# Pre-compute worst-opening-block index table for stress testing (Option 2)
-# ---------------------------------------------------------------------------
-
 def _worst_block_starts(n_years: int, bottom_quartile: bool = True) -> List[int]:
-    """Return start indices whose n_years cumulative return falls in the bottom quartile."""
+    """Return start indices whose n_years cumulative return falls in the bottom tail."""
     n_hist = len(MSCI_WORLD_ANNUAL)
     if n_years < 1 or n_years > n_hist:
-        return list(range(n_hist - 1))
+        return list(range(max(n_hist - 1, 1)))
     results: List[Tuple[float, int]] = []
     for start in range(n_hist - n_years + 1):
         log_cum = sum(math.log1p(MSCI_WORLD_ANNUAL[start + i]) for i in range(n_years))
@@ -155,7 +116,6 @@ def _worst_block_starts(n_years: int, bottom_quartile: bool = True) -> List[int]
     return [start for _, start in results[:cutoff]]
 
 
-# Cache worst-block tables for the default stress lengths we care about
 _WORST_BLOCK_CACHE: Dict[int, List[int]] = {}
 
 
@@ -164,10 +124,6 @@ def _get_worst_starts(n_years: int) -> List[int]:
         _WORST_BLOCK_CACHE[n_years] = _worst_block_starts(n_years)
     return _WORST_BLOCK_CACHE[n_years]
 
-
-# ---------------------------------------------------------------------------
-# Config / data structures
-# ---------------------------------------------------------------------------
 
 @dataclass(frozen=True)
 class SimulationConfig:
@@ -192,7 +148,11 @@ class SimulationConfig:
     target_inflation:          float
     one_time_events:           Dict[int, float]
     bootstrap_block_sizes:     Tuple[int, ...]
-    stress_first_n_years:      int   # 0 = disabled; >0 = run stress scenario
+    stress_first_n_years:      int
+    withdrawal_tax_rate:       float
+    inflate_contributions:     bool
+    medicare_age:              int
+    pre_medicare_extra_annual: float
 
 
 @dataclass
@@ -218,10 +178,6 @@ class SimulationPath:
     wedge_depleted:         bool
     final_cumulative_inflation: float
 
-
-# ---------------------------------------------------------------------------
-# Config loading
-# ---------------------------------------------------------------------------
 
 def load_config(path: str) -> SimulationConfig:
     with open(path, "rb") as fh:
@@ -255,16 +211,16 @@ def load_config(path: str) -> SimulationConfig:
         one_time_events            = events,
         bootstrap_block_sizes      = block_sizes,
         stress_first_n_years       = int(raw.get("stress_first_n_years", 0)),
+        withdrawal_tax_rate        = float(raw.get("withdrawal_tax_rate", 0.0)),
+        inflate_contributions      = bool(raw.get("inflate_contributions", True)),
+        medicare_age               = int(raw.get("medicare_age", DEFAULT_MEDICARE_AGE)),
+        pre_medicare_extra_annual  = float(raw.get("pre_medicare_extra_annual", 0.0)),
     )
     validate_config(cfg)
     return cfg
 
 
 def validate_config(cfg: SimulationConfig) -> None:
-    if cfg.starting_age > cfg.retirement_age:
-        # Supported: the simulator can begin after retirement.  It is not an
-        # error, but the other age invariants remain important.
-        pass
     if cfg.end_age < cfg.starting_age:
         raise ValueError("end_age must be greater than or equal to starting_age")
     if not 0.0 <= cfg.equity_allocation <= 1.0:
@@ -280,30 +236,26 @@ def validate_config(cfg: SimulationConfig) -> None:
         raise ValueError("cash_wedge_years must not be negative")
     if cfg.target_equity_cagr <= -1.0 or cfg.target_inflation <= -1.0:
         raise ValueError("target return and inflation values must be greater than -100%")
+    if not 0.0 <= cfg.withdrawal_tax_rate < 1.0:
+        raise ValueError("withdrawal_tax_rate must be in [0.0, 1.0)")
+    if cfg.pre_medicare_extra_annual < 0.0:
+        raise ValueError("pre_medicare_extra_annual must not be negative")
+    if cfg.medicare_age < 0:
+        raise ValueError("medicare_age must not be negative")
 
-# ---------------------------------------------------------------------------
-# Bootstrap engine
-# ---------------------------------------------------------------------------
 
 def bootstrap_historical_series(
     cfg: SimulationConfig,
     rng: random.Random,
     force_bad_opening: bool = False,
 ) -> Tuple[List[float], List[float]]:
-    """Stitch random historical blocks, then apply anchored drift shift.
-
-    If force_bad_opening=True, the stress_first_n_years starting at retirement
-    are replaced with worst historical windows, simulating a sequence-of-returns
-    catastrophe right at retirement (Option 2). The remaining years stay identical
-    to the normal case for fair comparison.
-    """
+    """Stitch random historical blocks, then apply anchored drift shift."""
     horizon = cfg.end_age - cfg.starting_age + 1
     n_hist  = len(MSCI_WORLD_ANNUAL)
     sizes   = [s for s in cfg.bootstrap_block_sizes if 1 <= s <= n_hist]
     if not sizes:
         raise ValueError("No valid bootstrap block sizes")
 
-    # --- First, generate the full random series (identical for normal and stress) ---
     eq_raw:  List[float] = []
     inf_raw: List[float] = []
 
@@ -319,33 +271,23 @@ def bootstrap_historical_series(
     eq_raw  = eq_raw[:horizon]
     inf_raw = inf_raw[:horizon]
 
-    # --- Option 2: replace stress years with worst historical windows ---
     if force_bad_opening and cfg.stress_first_n_years > 0:
         pre_ret_years = max(0, min(cfg.retirement_age - cfg.starting_age, horizon))
         stress_len = min(cfg.stress_first_n_years, horizon - pre_ret_years, n_hist)
-        
+
         if stress_len > 0:
             bad_starts = _get_worst_starts(stress_len)
-            # Use deterministic selection based on RNG state to keep results reproducible
-            # We derive a stress-specific seed from the RNG state
             stress_rng = random.Random(rng.randint(0, 2**31 - 1))
             open_start = stress_rng.choice(bad_starts)
-            
-            # Replace stress years (starting at retirement)
             ret_start = pre_ret_years
             eq_raw = eq_raw[:ret_start] + MSCI_WORLD_ANNUAL[open_start:open_start + stress_len] + eq_raw[ret_start + stress_len:]
             inf_raw = inf_raw[:ret_start] + CPI_ANNUAL[open_start:open_start + stress_len] + inf_raw[ret_start + stress_len:]
 
-    # Option 3: anchored shock decomposition for both series (global-mean referenced)
     return (
         _shift_to_target_anchored(eq_raw,  cfg.target_equity_cagr, MSCI_WORLD_GEO_LOG_MEAN),
         _shift_to_target_anchored(inf_raw, cfg.target_inflation, CPI_GEO_LOG_MEAN),
     )
 
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
 
 def percentile(values: Sequence[float], pct: float) -> float:
     if not values:
@@ -364,6 +306,12 @@ def percentile(values: Sequence[float], pct: float) -> float:
 
 def format_money(value: float) -> str:
     return f"${int(round(value)):,}"
+
+
+def real_wealth(nominal: float, cumulative_inflation: float) -> float:
+    if cumulative_inflation <= 0.0:
+        return nominal
+    return nominal / cumulative_inflation
 
 
 def build_withdrawal(
@@ -400,10 +348,6 @@ def apply_guardrail_cut(
     return base_spending, actual_spending, reference_withdrawal_rate
 
 
-# ---------------------------------------------------------------------------
-# Core path simulation
-# ---------------------------------------------------------------------------
-
 def simulate_path(
     cfg:              SimulationConfig,
     seed:             int,
@@ -437,16 +381,10 @@ def simulate_path(
 
     for age, equity_return, inflation in zip(ages, equity_series, inflation_series):
 
-        # YearState records the balance at the beginning of this age.  Cash
-        # flows occur during the year and returns are then applied to the
-        # remaining balance.  This avoids crediting a full year of returns to
-        # an end-of-year contribution or charging an extra year of inflation to
-        # the first retirement withdrawal.
         contribution = cfg.monthly_contribution * 12.0 if age < cfg.retirement_age else 0.0
+        if contribution > 0.0 and cfg.inflate_contributions:
+            contribution *= inflation_index
 
-        # Social Security is specified in today's dollars.  Apply the
-        # start-of-year inflation index every year so COLA matches spending
-        # and one-time events, including when the sim starts after claim age.
         if cfg.social_security_annual > 0.0 and age >= cfg.social_security_start_age:
             social_security_income = cfg.social_security_annual * inflation_index
         else:
@@ -456,11 +394,9 @@ def simulate_path(
         actual_spending = 0.0
 
         if age >= cfg.retirement_age:
-            # Inflate base spending
             if base_spending == 0.0:
                 base_spending = cfg.annual_spending * inflation_index
 
-            # Fund wedge at retirement
             if (
                 cfg.cash_wedge_years > 0.0
                 and not wedge_initialized
@@ -472,27 +408,31 @@ def simulate_path(
                 wedge_retired     = False
                 wedge_initialized = True
 
-            # Spending (with volatility flex)
             total_assets_before_spending = portfolio_wealth + wedge_cash
             actual_spending = build_withdrawal(
                 base_spending, equity_return, cfg.target_equity_cagr, cfg.spending_volatility
             )
 
-            # Guardrails
             base_spending, actual_spending, reference_withdrawal_rate = apply_guardrail_cut(
                 base_spending, actual_spending, total_assets_before_spending, reference_withdrawal_rate
             )
 
+            # Insurance / other pre-Medicare costs are not discretionary, so they
+            # are added after the lifestyle guardrail and are not cut with it.
+            if age < cfg.medicare_age and cfg.pre_medicare_extra_annual > 0.0:
+                actual_spending += cfg.pre_medicare_extra_annual * inflation_index
+
             if initial_reference_wr_for_wedge is None and reference_withdrawal_rate is not None:
                 initial_reference_wr_for_wedge = reference_withdrawal_rate
 
-            # Net spending after SS offsets
             net_spending_need = max(0.0, actual_spending - ss_income_this_year)
             ss_surplus        = max(0.0, ss_income_this_year - actual_spending)
             if ss_surplus > 0.0:
                 portfolio_wealth += ss_surplus
 
-            # Wedge logic
+            if net_spending_need > 0.0 and cfg.withdrawal_tax_rate > 0.0:
+                net_spending_need /= (1.0 - cfg.withdrawal_tax_rate)
+
             if not wedge_retired:
                 total_assets        = portfolio_wealth + wedge_cash
                 current_portfolio_wr = (
@@ -530,25 +470,17 @@ def simulate_path(
             else:
                 portfolio_wealth -= net_spending_need
 
-        # Charity
         if cfg.charity_pct > 0.0 and portfolio_wealth > 0.0:
             portfolio_wealth -= portfolio_wealth * cfg.charity_pct
 
-        # One-time event amounts are stated in today's dollars in config.toml.
-        # Convert them to the nominal dollar amount for this simulation year.
         portfolio_wealth += cfg.one_time_events.get(age, 0.0) * inflation_index
-
-        # Add annual contributions after retirement withdrawals; they receive
-        # this year's investment return below but no prior-year return.
         portfolio_wealth += contribution
 
-        # Wedge covers any portfolio shortfall
         if portfolio_wealth < 0.0 and wedge_cash > 0.0:
             transfer          = min(-portfolio_wealth, wedge_cash)
             wedge_cash       -= transfer
             portfolio_wealth += transfer
 
-        # Depletion detection (before clamping)
         year_depleted = age >= cfg.retirement_age and (portfolio_wealth + wedge_cash) <= 0.0
         if year_depleted:
             depleted_any_time = True
@@ -581,8 +513,6 @@ def simulate_path(
             social_security_income=ss_income_this_year,
         ))
 
-        # Grow the post-cash-flow balances through this age.  The resulting
-        # balance is the opening balance for the next age.
         portfolio_return = (
             cfg.equity_allocation * equity_return
             + (1.0 - cfg.equity_allocation) * bond_return
@@ -592,10 +522,6 @@ def simulate_path(
             cash_return = cfg.cash_return_override if cfg.cash_return_override is not None else inflation
             wedge_cash *= 1.0 + cash_return
         inflation_index *= 1.0 + inflation
-        # Carry last year's realized inflation into next year's spending.
-        # Doing it here (not at the start of the next year) keeps the first
-        # retirement withdrawal on the start-of-year index and preserves
-        # any guardrail cut in real terms.
         if base_spending > 0.0:
             base_spending *= 1.0 + inflation
 
@@ -603,7 +529,6 @@ def simulate_path(
         if len(recent_returns) > 5:
             recent_returns.pop(0)
 
-    # Wedge depleted: only if wedge was never retired and is 0 at end of simulation
     final_wedge_depleted = (
         cfg.cash_wedge_years > 0.0
         and not wedge_retired
@@ -619,10 +544,6 @@ def simulate_path(
     )
 
 
-# ---------------------------------------------------------------------------
-# Aggregation
-# ---------------------------------------------------------------------------
-
 def compute_percentile_rows(results_by_age: Dict[int, List[float]]) -> Dict[int, Dict[str, float]]:
     labels = [
         ("p01", 1), ("p05", 5), ("p10", 10), ("p25", 25),
@@ -637,10 +558,11 @@ def compute_percentile_rows(results_by_age: Dict[int, List[float]]) -> Dict[int,
 def run_simulation(
     cfg: SimulationConfig,
     force_bad_opening: bool = False,
-) -> Tuple[List[int], List[List[int]], Dict[int, Dict[str, float]], float, float, float, float]:
+) -> Tuple[List[int], List[List[int]], Dict[int, Dict[str, float]], Dict[int, Dict[str, float]], float, float, float, float]:
     ages   = list(range(cfg.starting_age, cfg.end_age + 1))
     matrix: List[List[int]] = []
     by_age: Dict[int, List[float]] = {age: [] for age in ages}
+    by_age_real: Dict[int, List[float]] = {age: [] for age in ages}
 
     depleted_any_time_count  = 0
     terminal_depleted_count  = 0
@@ -653,6 +575,7 @@ def run_simulation(
         for year in path.years:
             row.append(int(round(year.total_wealth)))
             by_age[year.age].append(year.total_wealth)
+            by_age_real[year.age].append(real_wealth(year.total_wealth, year.cumulative_inflation))
         matrix.append(row)
 
         if path.depleted_any_time:   depleted_any_time_count += 1
@@ -660,21 +583,17 @@ def run_simulation(
         if path.wedge_depleted:      wedge_depleted_count    += 1
         inflation_factors.append(path.final_cumulative_inflation)
 
-    percentile_rows = compute_percentile_rows(by_age)
     return (
         ages,
         matrix,
-        percentile_rows,
+        compute_percentile_rows(by_age),
+        compute_percentile_rows(by_age_real),
         depleted_any_time_count / cfg.simulations,
         terminal_depleted_count / cfg.simulations,
         wedge_depleted_count    / cfg.simulations,
         percentile(inflation_factors, 50),
     )
 
-
-# ---------------------------------------------------------------------------
-# Output
-# ---------------------------------------------------------------------------
 
 def write_results_csv(path: str, ages: Sequence[int], matrix: Sequence[Sequence[int]]) -> None:
     with open(path, "w", newline="", encoding="utf-8") as fh:
@@ -697,6 +616,7 @@ def _print_summary_block(
     cfg:                        SimulationConfig,
     ages:                       Sequence[int],
     matrix:                     Sequence[Sequence[int]],
+    real_percentile_rows:       Dict[int, Dict[str, float]],
     depleted_any_time_rate:     float,
     terminal_depleted_rate:     float,
     wedge_depletion_rate:       float,
@@ -706,6 +626,7 @@ def _print_summary_block(
     final_values = [row[-1] for row in matrix]
     end_age      = ages[-1]
     years        = cfg.end_age - cfg.starting_age
+    real_final   = real_percentile_rows[end_age]
 
     if label:
         print(f"\n{'=' * 75}")
@@ -725,14 +646,15 @@ def _print_summary_block(
     if cfg.cash_wedge_years > 0.0:
         print(f" Wedge depleted     : {wedge_depletion_rate * 100:.1f}%")
     print()
-    print(f" {'PORTFOLIO AT AGE ' + str(end_age):<30}{'NOMINAL':>18}{'TODAY\'S $':>18}")
+    print(f" {'PORTFOLIO AT AGE ' + str(end_age):<30}{'NOMINAL':>18}{"TODAY'S $":>18}")
     print("-" * 75)
-    for lbl, pct in [
-        ("99th", 99), ("95th", 95), ("90th", 90), ("75th", 75),
-        ("Median", 50), ("25th", 25), ("10th", 10), ("5th", 5), ("1st", 1),
+    for lbl, key in [
+        ("99th", "p99"), ("95th", "p95"), ("90th", "p90"), ("75th", "p75"),
+        ("Median", "median"), ("25th", "p25"), ("10th", "p10"), ("5th", "p05"), ("1st", "p01"),
     ]:
+        pct = {"p99": 99, "p95": 95, "p90": 90, "p75": 75, "median": 50, "p25": 25, "p10": 10, "p05": 5, "p01": 1}[key]
         nominal  = percentile(final_values, pct)
-        real     = nominal / median_cumulative_inflation if median_cumulative_inflation > 0.0 else nominal
+        real     = real_final[key]
         row_label = lbl + " percentile"
         print(f" {row_label:<30}{format_money(nominal):>18}{format_money(real):>18}")
     print("=" * 75)
@@ -742,23 +664,20 @@ def print_summary(
     cfg:                        SimulationConfig,
     ages:                       Sequence[int],
     matrix:                     Sequence[Sequence[int]],
+    real_percentile_rows:       Dict[int, Dict[str, float]],
     depleted_any_time_rate:     float,
     terminal_depleted_rate:     float,
     wedge_depletion_rate:       float,
     median_cumulative_inflation: float,
 ) -> None:
     _print_summary_block(
-        cfg, ages, matrix,
+        cfg, ages, matrix, real_percentile_rows,
         depleted_any_time_rate, terminal_depleted_rate,
         wedge_depletion_rate,
         median_cumulative_inflation,
         label="MONTE CARLO SIMULATION SUMMARY — Anchored Block Bootstrap",
     )
 
-
-# ---------------------------------------------------------------------------
-# Entry point
-# ---------------------------------------------------------------------------
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
     _ = list(argv or sys.argv[1:])
@@ -773,42 +692,52 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     print("Running Monte Carlo simulation (anchored historical block bootstrap)...")
     print()
 
-    # --- Main run ---
-    (ages, matrix, percentile_rows,
+    (ages, matrix, percentile_rows, real_percentile_rows,
      depleted_any_time_rate, terminal_depleted_rate,
      wedge_depletion_rate,
      median_cumulative_inflation) = run_simulation(cfg, force_bad_opening=False)
 
     results_csv = os.path.join(script_dir, "portfolio_simulation.csv")
     pct_csv     = os.path.join(script_dir, "portfolio_percentiles.csv")
+    real_csv    = os.path.join(script_dir, "portfolio_percentiles_real.csv")
     write_results_csv(results_csv, ages, matrix)
     write_percentiles_csv(pct_csv, ages, percentile_rows)
+    write_percentiles_csv(real_csv, ages, real_percentile_rows)
     print(f"Results saved to  : {results_csv}")
     print(f"Percentiles saved : {pct_csv}")
+    print(f"Real $ percentiles: {real_csv}")
     print()
 
     print_summary(
-        cfg, ages, matrix,
+        cfg, ages, matrix, real_percentile_rows,
         depleted_any_time_rate, terminal_depleted_rate,
         wedge_depletion_rate,
         median_cumulative_inflation,
     )
 
-    # --- Option 2: stress scenario ---
     if cfg.stress_first_n_years > 0:
         print(f"\nRunning stress scenario: worst opening {cfg.stress_first_n_years} years forced...")
         print()
-        (s_ages, s_matrix, _s_pct,
+        (s_ages, s_matrix, _s_pct, s_real,
          s_dep_any, s_dep_term,
          s_wedge,
          s_inf) = run_simulation(cfg, force_bad_opening=True)
 
+        stress_sim_csv = os.path.join(script_dir, "portfolio_simulation_stress.csv")
         stress_pct_csv = os.path.join(script_dir, "portfolio_percentiles_stress.csv")
+        stress_real_csv = os.path.join(script_dir, "portfolio_percentiles_real_stress.csv")
+        write_results_csv(stress_sim_csv, s_ages, s_matrix)
+        write_percentiles_csv(stress_pct_csv, s_ages, _s_pct)
+        write_percentiles_csv(stress_real_csv, s_ages, s_real)
+        print(f"Stress results saved to  : {stress_sim_csv}")
+        print(f"Stress percentiles saved : {stress_pct_csv}")
+        print(f"Stress real $ percentiles: {stress_real_csv}")
+
         write_percentiles_csv(stress_pct_csv, s_ages, _s_pct)
         print(f"Stress percentiles: {stress_pct_csv}")
 
         _print_summary_block(
-            cfg, s_ages, s_matrix,
+            cfg, s_ages, s_matrix, s_real,
             s_dep_any, s_dep_term, s_wedge, s_inf,
             label=(
                 f"STRESS SCENARIO — Worst {cfg.stress_first_n_years}-Year Opening Block "

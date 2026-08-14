@@ -11,23 +11,18 @@ cp config.example.toml config.toml   # first time only
 ```
 
 Outputs:
-- `portfolio_simulation.csv` — per-simulation wealth by age (one column per sim)
-- `portfolio_percentiles.csv` — p01/p05/p10/p25/median/p75/p90/p95/p99 by age
+- `portfolio_simulation.csv` — per-simulation nominal wealth by age
+- `portfolio_percentiles.csv` — nominal percentiles by age
+- `portfolio_percentiles_real.csv` — today's-dollar percentiles (each path deflated by **that path's** inflation)
 - Summary table printed to stdout
 
 `run_simulation.sh` uses your system `python3`. No external dependencies — standard library only (Python 3.11+ required for `tomllib`).
 
 ## How the engine works
 
-1. **Block bootstrap** — a simulation path is built by randomly drawing variable-length slices (5, 10, 15, or 20 years) from the MSCI World annual return array and the CPI array. Slices are concatenated until the full horizon (`end_age - starting_age + 1` years) is covered. Equity returns and inflation are always drawn from the *same* historical slice, so their co-movement is preserved.
-
-2. **CAGR calibration** — the raw bootstrapped equity series has a geometric mean of ~9.7% (MSCI World 1970–2023). Each path is shifted in log-space so its geometric mean equals `target_equity_cagr`. Crash magnitude and volatility profile are preserved; only the long-run drift is adjusted. The same shift is applied to inflation toward `target_inflation`.
-
-3. **Path simulation** — the calibrated return and inflation series drive a year-by-year engine covering contributions, portfolio growth, inflation-indexed spending, Social Security, a cash wedge, charity, and one-time events.
-
-### Why MSCI World instead of S&P 500?
-
-The S&P 500 1928–2023 geometric mean is ~9.7% nominal. The MSCI World 1970–2023 geometric mean is also ~9.7% nominal — the same issue. Both reflect the same post-WWII developed-market bull run. The Dimson–Marsh–Staunton Global Investment Returns Yearbook (2025) estimates a forward-looking global DM equity return of roughly 6–7% nominal, discounting the structural tailwinds that cannot repeat. Setting `target_equity_cagr = 0.07` applies that discount explicitly, while still using MSCI World's real crash history (1974: −25%, 2002: −20%, 2008: −40%) as the distribution of outcomes.
+1. **Block bootstrap** — a path is built by randomly drawing short slices (default 4, 5, 6, or 8 years) from the MSCI World annual return array and the CPI array. Equity and inflation always come from the same historical slice.
+2. **CAGR calibration** — each raw series is shifted so shocks stay relative to the global historical mean, while the long-run drift matches `target_equity_cagr` / `target_inflation`.
+3. **Path simulation** — contributions, growth, inflation-indexed spending, Social Security, optional pre-Medicare extra, optional withdrawal tax, cash wedge, charity, and one-time events.
 
 ## Configuration
 
@@ -35,60 +30,66 @@ All configuration lives in `config.toml`. Copy `config.example.toml` as a starti
 
 ### Human levers
 
-These are the knobs you actually care about:
-
 | Parameter | Description |
 |---|---|
 | `starting_age` | Your current age |
 | `retirement_age` | Age you stop contributing and start drawing |
 | `end_age` | Simulation end age (e.g. 100) |
 | `starting_wealth` | Current investable net worth |
-| `monthly_contribution` | Monthly savings during accumulation phase |
-| `annual_spending` | Target annual spending in today's dollars |
-| `spending_volatility` | Fraction to flex spending up/down in good/bad equity years (e.g. `0.10` = ±10%) |
-| `charity_pct` | Annual charitable giving as fraction of portfolio balance |
-| `equity_allocation` | Fraction in global equities; remainder earns `bond_return_override` |
+| `monthly_contribution` | Monthly savings during accumulation |
+| `inflate_contributions` | `true` (default) grows contributions with inflation |
+| `annual_spending` | Core lifestyle spending in today's dollars |
+| `pre_medicare_extra_annual` | Extra today's-$ spend while retired and younger than `medicare_age` |
+| `medicare_age` | Age at which the extra stops (default 65) |
+| `withdrawal_tax_rate` | Tax applied to portfolio withdrawals after SS (see below) |
+| `spending_volatility` | Fraction to flex core spending in good/bad equity years |
+| `equity_allocation` | Fraction in global equities; remainder needs `bond_return_override` |
 | `social_security_start_age` | Age at which SS income begins |
-| `social_security_annual` | Annual SS benefit in today's dollars |
+| `social_security_annual` | Annual SS benefit in today's dollars for the claiming age you chose |
 | `simulations` | Number of Monte Carlo paths (10,000 recommended) |
+
+### Withdrawal tax
+
+`withdrawal_tax_rate` is a single blended rate on the portfolio draw **after** Social Security has already offset spending.
+
+- Set it to `0.0` if taxes are already inside `annual_spending`.
+- Set it to `0.10`–`0.15` if `annual_spending` is a lifestyle number and most withdrawals will come from pretax accounts. That is the usual case.
+- There is no bracket engine, Roth/pretax split, or capital-gains vs ordinary-income split. If your tax picture is unusual, leave the rate at 0 and put tax in the spending line yourself.
+
+### Why there is no expense-ratio field
+
+Fund fees are easier to fold into `target_equity_cagr` than to capture with one number. A three-fund plus stock portfolio does not have a single published ER. If your all-in cost is about 0.15%, use `target_equity_cagr = 0.0685` instead of `0.07`.
 
 ### Return assumptions
 
 | Parameter | Default | Description |
 |---|---|---|
-| `target_equity_cagr` | `0.07` | Forward-looking nominal equity CAGR (~4% real at 3% inflation). DMS Yearbook 2025 estimate for global DM. Lower = more conservative. Set to `0.097` to use raw MSCI history unmodified. |
-| `target_inflation` | `0.03` | Nominal CPI target. 3% is modestly above the Fed 2% anchor. |
+| `target_equity_cagr` | `0.07` | Forward-looking nominal equity CAGR. Lower = more conservative. |
+| `target_inflation` | `0.03` | Nominal CPI target. |
 
 ### Cash wedge
 
-The cash wedge holds a liquid cash buffer at retirement to avoid selling equities in down years.
-
 | Parameter | Description |
 |---|---|
-| `cash_wedge_years` | Years of inflation-adjusted spending held in cash. Set to `0` to disable. |
-| `cash_wedge_refill_rule` | `"five_year_mean"` — use wedge when 5-year avg return is below target; `"negative_year"` — use in any down year |
-| `cash_wedge_escape_velocity` | Dissolve the wedge permanently once withdrawal rate drops below this fraction of the initial retirement WR. E.g. `0.25` means once your WR is ¼ of what it was at retirement, the wedge is no longer needed. |
-| `cash_return_override` | Nominal annual return on the cash bucket (default `0.0` — conservative) |
-| `bond_return_override` | Nominal annual return for the non-equity allocation (default `0.0`) |
+| `cash_wedge_years` | Years of inflation-adjusted core spending held in cash. `0` disables. |
+| `cash_wedge_refill_rule` | `five_year_mean` or `negative_year` |
+| `cash_wedge_escape_velocity` | Dissolve the wedge once WR drops below this fraction of the initial WR |
 
 ### Bootstrap tuning
 
 ```toml
-bootstrap_block_sizes = [5, 10, 15, 20]  # block lengths in years
+bootstrap_block_sizes = [4, 5, 6, 8]
 ```
 
-Longer blocks preserve more sequence autocorrelation (e.g. a whole lost decade stays together). Shorter blocks allow more recombination. The default mix of 5–20 year blocks is a reasonable balance.
+Short blocks keep multi-year crashes together but recombine history more freely. 30–40 year blocks drawn from only 54 years of data are almost the same handful of overlapping lifetimes.
 
 ### One-time events
 
 ```toml
 [one_time_events]
-"45" = 1000000    # positive = inflow (inheritance, equity vest, property sale)
-"55" = -100000    # negative = outflow (large purchase, tax bill)
-"60" = 250000
+"45" = 1000000    # today's dollars; inflated to that age
+"55" = -100000
 ```
-
-Keys are ages as quoted strings. Values are nominal dollars at the time of the event (not today's dollars).
 
 ## Understanding the output
 
@@ -97,49 +98,24 @@ Keys are ages as quoted strings. Values are nominal dollars at the time of the e
 ---------------------------------------------------------------------------
  99th percentile                      $46,077,966        $7,157,282
  ...
- Median percentile                    $35,925,408        $5,580,287
- ...
- 1st percentile                       $20,920,986        $3,249,653
 ```
 
-- **NOMINAL** — raw portfolio value at end age in future dollars
-- **TODAY'S $** — nominal value deflated by the median cumulative inflation across all simulations. This is the purchasing-power equivalent in current dollars.
-- **Depleted anytime** — fraction of simulations where the total portfolio (portfolio + wedge) hit zero at any point in retirement
-- **Depleted at `end_age`** — fraction where the final year value was zero
-- **Wedge depleted** — fraction where the cash wedge ran to zero before the escape-velocity condition triggered. A high number here (including 100%) is expected when your withdrawal rate is very low — the portfolio grows quickly enough that the wedge escape condition fires and the wedge is merged back into the portfolio.
+- **NOMINAL** — future dollars at end age
+- **TODAY'S $** — each simulation is deflated by **that path's** cumulative inflation, then the percentile is taken. This is not “nominal percentile ÷ median inflation.”
+- **Depleted anytime** — fraction of paths where portfolio + wedge hit zero at any retirement year
+- **Depleted at `end_age`** — fraction whose final recorded year was zero
+- **Wedge depleted** — wedge was never retired and is empty at the end
 
-## Design
-
-The simulator is a single Python file with no external dependencies.
-
-**Key functions:**
-
-- `bootstrap_historical_series(cfg, rng)` — draws one bootstrapped + CAGR-shifted path
-- `_shift_to_target(series, target_cagr)` — log-space CAGR calibration
-- `simulate_path(cfg, seed)` — runs one full lifetime simulation, returns `SimulationPath`
-- `apply_guardrail_cut(...)` — cuts spending if withdrawal rate exceeds the ceiling (raise side omitted — spending grows only via inflation indexing, preventing compounding spending in bull runs)
-- `run_simulation(cfg)` — runs N paths and aggregates results
-- `print_summary(...)` — prints the stdout summary table
-
-**Data structures:**
-
-- `SimulationConfig` — frozen dataclass, all config fields
-- `YearState` — one year of simulation state (wealth, spending, SS, inflation, etc.)
-- `SimulationPath` — full lifetime path plus depletion/SS flags
+Spending guardrails are always on: if the withdrawal rate exceeds 120% of the first retirement year's rate, core lifestyle spending is cut 10% permanently (healthcare extra is not cut). Depletion rates therefore assume you will accept those cuts. They are not “I kept spending $X forever.”
 
 ## Testing
 
-Unit tests live in `tests/test_simulator.py`. Run:
-
 ```bash
-python3 -m unittest discover -s tests -v
+./run_tests.sh
 ```
 
-Tests cover:
+Or:
 
-- Bootstrap series length matches horizon exactly
-- All bootstrapped values are drawn from the historical arrays (not synthesized)
-- Determinism: same seed → same path
-- Earlier retirement produces lower terminal wealth (all else equal)
-- High spending triggers depletion; low spending does not
-- Social Security income compounds with inflation correctly
+```bash
+python3 -m unittest -v test_monte_carlo_portfolio.py
+```

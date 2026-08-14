@@ -1,29 +1,21 @@
 # =============================================================================
 # Monte Carlo Portfolio Simulator — Configuration
 # =============================================================================
-# IMPORTANT: The values below are PLACEHOLDER examples only.
-# Replace ALL of them with your actual financial data before running.
-# The default starting_wealth / annual_spending ratio is intentionally
-# conservative — you must set these to reflect your real situation.
-# =============================================================================
-# All monetary values are in TODAY'S dollars (nominal). The simulator inflates
-# spending forward each year using the stochastic inflation model. Investment
-# returns are also nominal (not inflation-adjusted).
+# All monetary values are in TODAY'S dollars. The simulator inflates spending,
+# Social Security, pre-Medicare extras, one-time events, and (optionally)
+# contributions using the bootstrapped CPI path.
 #
-# Run the simulation: ./run_simulation.sh
+# Copy to config.toml and edit:  cp config.example.toml config.toml
+# Run: ./run_simulation.sh
+# =============================================================================
 
 
 # -----------------------------------------------------------------------------
 # Personal / Demographic
 # -----------------------------------------------------------------------------
 
-# Your current age when the simulation starts
 starting_age = 50
-
-# Age you plan to stop working and drawing a salary
 retirement_age = 60
-
-# Age the simulation runs to.
 end_age = 100
 
 
@@ -31,17 +23,20 @@ end_age = 100
 # Wealth & Contributions
 # -----------------------------------------------------------------------------
 
-# Current total investable portfolio value (savings + brokerage + 401k, etc.)
 starting_wealth = 5000000
-
-# Amount you invest per month before retirement. Stops at retirement_age.
 monthly_contribution = 3000
 
-# Your annual spending in TODAY'S dollars.
+# Grow monthly_contribution with simulated inflation each working year.
+# true  = contributions keep pace with prices (typical for a paycheck)
+# false = the dollar amount you typed is used every year, unadjusted
+inflate_contributions = true
+
+# Core lifestyle spending in TODAY'S dollars. Inflated each year after
+# retirement. Do not include pre-Medicare health insurance here if you
+# set pre_medicare_extra_annual below.
 annual_spending = 60000
 
-# Discretionary spending flexibility: how much you'll increase/decrease
-# spending in unusually good or bad market years (0.05 = ±5%)
+# Discretionary spending flexibility in good/bad equity years (0.05 = ±5%)
 spending_volatility = 0.05
 
 # Annual charitable giving as a fraction of remaining portfolio
@@ -49,10 +44,34 @@ charity_pct = 0.01
 
 
 # -----------------------------------------------------------------------------
+# Taxes on portfolio withdrawals
+# -----------------------------------------------------------------------------
+# Applied only to the portfolio draw after Social Security has offset spending.
+#   0.00 = you already included tax in annual_spending
+#   0.10 to 0.15 = typical if annual_spending is a "lifestyle" number and
+#                  most withdrawals will come from pretax accounts
+# There is no full tax engine. If your tax picture is unusual, leave this
+# at 0.0 and fold taxes into annual_spending yourself.
+withdrawal_tax_rate = 0.0
+
+
+# -----------------------------------------------------------------------------
+# Pre-Medicare health insurance
+# -----------------------------------------------------------------------------
+# Extra annual spending (TODAY'S dollars) while you are retired and younger
+# than medicare_age. Use this for marketplace / COBRA premiums. It is added
+# on top of annual_spending and is not cut by guardrails.
+# Set to 0 if you retire at or after Medicare age, or if that cost is
+# already inside annual_spending.
+medicare_age = 65
+pre_medicare_extra_annual = 0
+
+
+# -----------------------------------------------------------------------------
 # Asset Allocation
 # -----------------------------------------------------------------------------
 
-# Fraction of portfolio held in equities (stocks). The remainder goes to bonds.
+# Fraction of portfolio held in equities. Remainder uses bond_return_override.
 equity_allocation = 0.99
 
 
@@ -60,10 +79,7 @@ equity_allocation = 0.99
 # Social Security
 # -----------------------------------------------------------------------------
 
-# Age at which Social Security benefits begin.
 social_security_start_age = 67
-
-# Annual Social Security benefit in TODAY'S dollars.
 social_security_annual = 30000
 
 
@@ -71,18 +87,17 @@ social_security_annual = 30000
 # Simulation Scale
 # -----------------------------------------------------------------------------
 
-# Number of Monte Carlo simulation runs.
 simulations = 10000
 
 
 # -----------------------------------------------------------------------------
 # Return & Inflation Assumptions
 # -----------------------------------------------------------------------------
+# Fund fees are not a separate input. Subtract your all-in expense ratio
+# from target_equity_cagr (for example 0.07 - 0.0015 = 0.0685). That is
+# more accurate than a single fee field when you hold several funds.
 
-# Long-run average annual nominal equity return (target CAGR).
 target_equity_cagr = 0.07
-
-# Long-run average annual inflation rate (target).
 target_inflation = 0.03
 
 
@@ -90,16 +105,17 @@ target_inflation = 0.03
 # Cash Wedge Settings
 # -----------------------------------------------------------------------------
 
-# Years of spending to keep in cash as emergency buffer
 cash_wedge_years = 0
 
 
 # -----------------------------------------------------------------------------
 # Block Bootstrap Settings
 # -----------------------------------------------------------------------------
+# Short blocks recombine history more freely while still keeping multi-year
+# crash sequences together. Longer 30-40 year blocks from a 54-year sample
+# are almost the same few overlapping lifetimes.
 
-# Block sizes for sampling historical periods (years)
-bootstrap_block_sizes = [5, 10, 15, 20, 30, 40]
+bootstrap_block_sizes = [4, 5, 6, 8]
 
 # Stress the first N retirement years with a bad historical block.
 stress_first_n_years = 10
@@ -109,7 +125,7 @@ stress_first_n_years = 10
 # One-Time Financial Events
 # -----------------------------------------------------------------------------
 # Lump-sum additions (positive) or withdrawals (negative) at specific ages.
-# Format: age (as string key) = dollar amount in TODAY'S dollars
+# Amounts are TODAY'S dollars and are inflated to the event year.
 # Examples: "55" = -50000 (home renovation), "65" = 200000 (inheritance)
 
 [one_time_events]
