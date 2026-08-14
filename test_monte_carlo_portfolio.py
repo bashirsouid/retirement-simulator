@@ -2,6 +2,8 @@
 
 import math
 import random
+import tempfile
+from pathlib import Path
 import sys
 import unittest
 from statistics import fmean
@@ -171,6 +173,125 @@ class SimulatePathTests(unittest.TestCase):
             curr = ss_years[i].social_security_income
             self.assertGreaterEqual(curr, prev * 0.99,
                                     f"SS income dropped at age {ss_years[i].age}")
+
+    def test_first_retirement_spending_is_not_inflated_for_retirement_year(self):
+        cfg = make_cfg(
+            starting_age=38,
+            retirement_age=40,
+            end_age=40,
+            annual_spending=40_000.0,
+            target_inflation=0.03,
+        )
+        path = sim.simulate_path(cfg, seed=0)
+        first_retirement_year = path.years[-1]
+        expected = 40_000.0 * path.years[-1].cumulative_inflation
+        self.assertAlmostEqual(first_retirement_year.base_spending, expected, places=6)
+
+    def test_ss_already_claimed_when_starting_after_claim_age(self):
+        cfg = make_cfg(
+            starting_age=67,
+            retirement_age=67,
+            end_age=67,
+            social_security_start_age=62,
+            social_security_annual=30_000.0,
+        )
+        path = sim.simulate_path(cfg, seed=0)
+        self.assertGreater(path.years[0].social_security_income, 0.0)
+
+    def test_exact_zero_assets_count_as_depletion(self):
+        cfg = make_cfg(
+            starting_age=38,
+            retirement_age=38,
+            end_age=38,
+            starting_wealth=100_000.0,
+            annual_spending=100_000.0,
+            monthly_contribution=0.0,
+            target_equity_cagr=0.0,
+            target_inflation=0.0,
+        )
+        # Override the bootstrap so this is exactly a zero-return path.
+        old_bootstrap = sim.bootstrap_historical_series
+        try:
+            sim.bootstrap_historical_series = lambda _cfg, _rng, force_bad_opening=False: ([0.0], [0.0])
+            path = sim.simulate_path(cfg, seed=0)
+        finally:
+            sim.bootstrap_historical_series = old_bootstrap
+        self.assertTrue(path.depleted_any_time)
+        self.assertTrue(path.terminal_depleted)
+
+    def test_one_time_event_is_inflation_indexed(self):
+        cfg = make_cfg(
+            starting_age=38,
+            retirement_age=100,
+            end_age=39,
+            starting_wealth=0.0,
+            monthly_contribution=0.0,
+            one_time_events={39: 100_000.0},
+            target_inflation=0.03,
+        )
+        old_bootstrap = sim.bootstrap_historical_series
+        try:
+            sim.bootstrap_historical_series = lambda _cfg, _rng, force_bad_opening=False: ([0.0, 0.0], [0.10, 0.10])
+            path = sim.simulate_path(cfg, seed=0)
+        finally:
+            sim.bootstrap_historical_series = old_bootstrap
+        self.assertAlmostEqual(path.years[-1].total_wealth, 110_000.0, places=6)
+
+    def test_contribution_does_not_receive_prior_year_return(self):
+        cfg = make_cfg(
+            starting_age=38,
+            retirement_age=40,
+            end_age=38,
+            starting_wealth=0.0,
+            monthly_contribution=100.0,
+        )
+        old_bootstrap = sim.bootstrap_historical_series
+        try:
+            sim.bootstrap_historical_series = lambda _cfg, _rng, force_bad_opening=False: ([0.10], [0.0])
+            path = sim.simulate_path(cfg, seed=0)
+        finally:
+            sim.bootstrap_historical_series = old_bootstrap
+        self.assertAlmostEqual(path.years[0].total_wealth, 1_200.0, places=6)
+
+
+class ConfigValidationTests(unittest.TestCase):
+
+    def test_partial_bond_allocation_requires_bond_return(self):
+        cfg = make_cfg(equity_allocation=0.80, bond_return_override=None)
+        with self.assertRaisesRegex(ValueError, "bond_return_override"):
+            sim.validate_config(cfg)
+
+    def test_explicit_bond_return_is_accepted(self):
+        cfg = make_cfg(equity_allocation=0.80, bond_return_override=0.03)
+        sim.validate_config(cfg)
+
+    def test_load_config_validates_non_equity_allocation(self):
+        text = """\
+starting_age = 38
+retirement_age = 65
+end_age = 100
+starting_wealth = 1000000
+annual_spending = 40000
+monthly_contribution = 0
+equity_allocation = 0.8
+simulations = 1
+"""
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path = Path(tmp) / "config.toml"
+            config_path.write_text(text)
+            with self.assertRaisesRegex(ValueError, "bond_return_override"):
+                sim.load_config(str(config_path))
+
+
+class HistoricalDataTests(unittest.TestCase):
+
+    def test_cpi_is_index_aligned_and_contains_known_observations(self):
+        self.assertEqual(len(sim.CPI_ANNUAL), len(sim.MSCI_WORLD_ANNUAL))
+        by_year = dict(zip(range(1970, 2024), sim.CPI_ANNUAL))
+        self.assertAlmostEqual(by_year[1974], 0.124, places=6)
+        self.assertAlmostEqual(by_year[1979], 0.113, places=6)
+        self.assertAlmostEqual(by_year[2009], -0.004, places=6)
+        self.assertAlmostEqual(by_year[2022], 0.080, places=6)
 
     def test_depletion_flag_set_on_high_spend(self):
         """A tiny portfolio with very high spending should eventually be depleted."""

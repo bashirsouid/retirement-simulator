@@ -62,18 +62,20 @@ MSCI_WORLD_ANNUAL: List[float] = [
 ]
 
 CPI_ANNUAL: List[float] = [
+    # US CPI-U annual-average percentage changes, 1970--2023 (BLS), aligned
+    # with MSCI_WORLD_ANNUAL above.  Do not substitute a Dec/Dec series here.
     # 1970   1971    1972    1973    1974    1975    1976    1977    1978    1979
-    0.0553, 0.0336, 0.0303, 0.0472, 0.0611, 0.0549, 0.0332, 0.0698, 0.0901, 0.0553,
+     0.055,  0.033,  0.034,  0.087,  0.124,  0.070,  0.049,  0.067,  0.076,  0.113,
     # 1980   1981    1982    1983    1984    1985    1986    1987    1988    1989
-    0.0316, 0.0390, 0.0381, 0.0395, 0.0380, 0.0102, 0.0614, 0.0735, 0.0110, 0.0444,
+     0.135,  0.103,  0.061,  0.032,  0.043,  0.036,  0.019,  0.037,  0.041,  0.048,
     # 1990   1991    1992    1993    1994    1995    1996    1997    1998    1999
-    0.0376, 0.0303, 0.0291, 0.0280, 0.0189, 0.0355, 0.0419, 0.0308, 0.0290, 0.0274,
+     0.054,  0.042,  0.030,  0.030,  0.026,  0.028,  0.029,  0.023,  0.016,  0.022,
     # 2000   2001    2002    2003    2004    2005    2006    2007    2008    2009
-    0.0026, 0.0296, 0.0285, 0.0228, 0.0168, 0.0159, 0.0227, 0.0268, 0.0388, 0.0316,
+     0.034,  0.028,  0.016,  0.023,  0.027,  0.034,  0.032,  0.029,  0.038, -0.004,
     # 2010   2011    2012    2013    2014    2015    2016    2017    2018    2019
-    0.0228, 0.0162, 0.0230, 0.0271, 0.0134, 0.0215, 0.0244, 0.0181, 0.0240, 0.0188,
+     0.016,  0.032,  0.021,  0.015,  0.016,  0.001,  0.013,  0.021,  0.024,  0.018,
     # 2020   2021    2022    2023
-    0.0031, 0.0213, 0.0207, 0.0700,
+     0.012,  0.047,  0.080,  0.041,
 ]
 
 assert len(MSCI_WORLD_ANNUAL) == len(CPI_ANNUAL) == 54, (
@@ -230,7 +232,7 @@ def load_config(path: str) -> SimulationConfig:
     if not block_sizes:
         raise ValueError("bootstrap_block_sizes must not be empty")
 
-    return SimulationConfig(
+    cfg = SimulationConfig(
         starting_age               = int(raw["starting_age"]),
         retirement_age             = int(raw["retirement_age"]),
         end_age                    = int(raw["end_age"]),
@@ -254,7 +256,30 @@ def load_config(path: str) -> SimulationConfig:
         bootstrap_block_sizes      = block_sizes,
         stress_first_n_years       = int(raw.get("stress_first_n_years", 0)),
     )
+    validate_config(cfg)
+    return cfg
 
+
+def validate_config(cfg: SimulationConfig) -> None:
+    if cfg.starting_age > cfg.retirement_age:
+        # Supported: the simulator can begin after retirement.  It is not an
+        # error, but the other age invariants remain important.
+        pass
+    if cfg.end_age < cfg.starting_age:
+        raise ValueError("end_age must be greater than or equal to starting_age")
+    if not 0.0 <= cfg.equity_allocation <= 1.0:
+        raise ValueError("equity_allocation must be between 0.0 and 1.0")
+    if cfg.equity_allocation < 1.0 and cfg.bond_return_override is None:
+        raise ValueError(
+            "bond_return_override is required when equity_allocation is below 1.0; "
+            "the simulator has no historical bond-return series"
+        )
+    if cfg.simulations < 1:
+        raise ValueError("simulations must be at least 1")
+    if cfg.cash_wedge_years < 0.0:
+        raise ValueError("cash_wedge_years must not be negative")
+    if cfg.target_equity_cagr <= -1.0 or cfg.target_inflation <= -1.0:
+        raise ValueError("target return and inflation values must be greater than -100%")
 
 # ---------------------------------------------------------------------------
 # Bootstrap engine
@@ -411,28 +436,21 @@ def simulate_path(
 
     for age, equity_return, inflation in zip(ages, equity_series, inflation_series):
 
-        # Pre-retirement contributions
+        # YearState records the balance at the beginning of this age.  Cash
+        # flows occur during the year and returns are then applied to the
+        # remaining balance.  This avoids crediting a full year of returns to
+        # an end-of-year contribution or charging an extra year of inflation to
+        # the first retirement withdrawal.
         contribution = cfg.monthly_contribution * 12.0 if age < cfg.retirement_age else 0.0
-        portfolio_wealth += contribution
-
-        # Portfolio growth
-        portfolio_return = (
-            cfg.equity_allocation * equity_return
-            + (1.0 - cfg.equity_allocation) * bond_return
-        )
-        portfolio_wealth *= (1.0 + portfolio_return)
-
-        # Wedge cash growth
-        if wedge_cash > 0.0:
-            cash_return = cfg.cash_return_override if cfg.cash_return_override is not None else inflation
-            wedge_cash *= (1.0 + cash_return)
-
-        # Inflation index
-        inflation_index *= (1.0 + inflation)
 
         # Social Security
         if cfg.social_security_annual > 0.0:
             if age == cfg.social_security_start_age:
+                social_security_income = cfg.social_security_annual * inflation_index
+            elif age > cfg.social_security_start_age and social_security_income == 0.0:
+                # The simulation can begin after benefits have already started.
+                # At the beginning of age N, N - starting_age prior annual CPI
+                # changes have occurred.
                 social_security_income = cfg.social_security_annual * inflation_index
             elif age > cfg.social_security_start_age and social_security_income > 0.0:
                 social_security_income *= (1.0 + inflation)
@@ -445,7 +463,9 @@ def simulate_path(
             if base_spending == 0.0:
                 base_spending = cfg.annual_spending * inflation_index
             else:
-                base_spending *= (1.0 + inflation)
+                # Inflation for age N is applied after this age's cash flow.
+                # Spending for this year therefore uses the prior index.
+                base_spending = base_spending
 
             # Fund wedge at retirement
             if cfg.cash_wedge_years > 0.0 and wedge_cash == 0.0 and age == cfg.retirement_age:
@@ -474,7 +494,7 @@ def simulate_path(
             if ss_surplus > 0.0:
                 portfolio_wealth += ss_surplus
 
-# Wedge logic
+            # Wedge logic
             if not wedge_retired:
                 total_assets        = portfolio_wealth + wedge_cash
                 current_portfolio_wr = (
@@ -516,8 +536,13 @@ def simulate_path(
         if cfg.charity_pct > 0.0 and portfolio_wealth > 0.0:
             portfolio_wealth -= portfolio_wealth * cfg.charity_pct
 
-        # One-time events
-        portfolio_wealth += cfg.one_time_events.get(age, 0.0)
+        # One-time event amounts are stated in today's dollars in config.toml.
+        # Convert them to the nominal dollar amount for this simulation year.
+        portfolio_wealth += cfg.one_time_events.get(age, 0.0) * inflation_index
+
+        # Add annual contributions after retirement withdrawals; they receive
+        # this year's investment return below but no prior-year return.
+        portfolio_wealth += contribution
 
         # Wedge covers any portfolio shortfall
         if portfolio_wealth < 0.0 and wedge_cash > 0.0:
@@ -526,7 +551,7 @@ def simulate_path(
             portfolio_wealth += transfer
 
         # Depletion detection (before clamping)
-        year_depleted = age >= cfg.retirement_age and (portfolio_wealth + wedge_cash) < 0.0
+        year_depleted = age >= cfg.retirement_age and (portfolio_wealth + wedge_cash) <= 0.0
         if year_depleted:
             depleted_any_time = True
 
@@ -557,6 +582,18 @@ def simulate_path(
             actual_spending=actual_spending,
             social_security_income=ss_income_this_year,
         ))
+
+        # Grow the post-cash-flow balances through this age.  The resulting
+        # balance is the opening balance for the next age.
+        portfolio_return = (
+            cfg.equity_allocation * equity_return
+            + (1.0 - cfg.equity_allocation) * bond_return
+        )
+        portfolio_wealth *= 1.0 + portfolio_return
+        if wedge_cash > 0.0:
+            cash_return = cfg.cash_return_override if cfg.cash_return_override is not None else inflation
+            wedge_cash *= 1.0 + cash_return
+        inflation_index *= 1.0 + inflation
 
         recent_returns.append(equity_return)
         if len(recent_returns) > 5:
