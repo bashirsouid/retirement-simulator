@@ -6,7 +6,7 @@
 
 # --- Ages ---
 starting_age   = 50   # your age now
-retirement_age = 60   # last working year is retirement_age; spending starts here
+retirement_age = 60   # last working year is 59; spending starts at 60
 end_age        = 100  # plan through this age (every path runs the full horizon)
 
 

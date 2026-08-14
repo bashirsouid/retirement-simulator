@@ -10,7 +10,7 @@ cp config.example.toml config.toml   # first time only
 ./run_simulation.sh
 ```
 
-Outputs:
+Outputs (main run, plus `*_stress` twins if `stress_first_n_years > 0`):
 - `portfolio_simulation.csv` — per-simulation nominal wealth by age
 - `portfolio_percentiles.csv` — nominal percentiles by age
 - `portfolio_percentiles_real.csv` — today's-dollar percentiles (each path deflated by **that path's** inflation)
@@ -24,6 +24,8 @@ Outputs:
 2. **CAGR calibration** — each raw series is shifted so shocks stay relative to the global historical mean, while the long-run drift matches `target_equity_cagr` / `target_inflation`.
 3. **Path simulation** — contributions, growth, inflation-indexed spending, Social Security, optional pre-Medicare extra, optional withdrawal tax, cash wedge, charity, and one-time events.
 
+Each year's CSV/summary balance is **after that year's spending and after that year's return**.
+
 ## Configuration
 
 All configuration lives in `config.toml`. Copy `config.example.toml` as a starting point.
@@ -33,7 +35,7 @@ All configuration lives in `config.toml`. Copy `config.example.toml` as a starti
 | Parameter | Description |
 |---|---|
 | `starting_age` | Your current age |
-| `retirement_age` | Age you stop contributing and start drawing |
+| `retirement_age` | First year you stop contributing and start drawing. Last working year is `retirement_age - 1`. |
 | `end_age` | Simulation end age (e.g. 100) |
 | `starting_wealth` | Current investable net worth |
 | `monthly_contribution` | Monthly savings during accumulation |
@@ -53,12 +55,12 @@ All configuration lives in `config.toml`. Copy `config.example.toml` as a starti
 `withdrawal_tax_rate` is a single blended rate on the portfolio draw **after** Social Security has already offset spending.
 
 - Set it to `0.0` if taxes are already inside `annual_spending`.
-- Set it to `0.10`–`0.15` if `annual_spending` is a lifestyle number and most withdrawals will come from pretax accounts. That is the usual case.
-- There is no bracket engine, Roth/pretax split, or capital-gains vs ordinary-income split. If your tax picture is unusual, leave the rate at 0 and put tax in the spending line yourself.
+- Set it to `0.10`–`0.15` if `annual_spending` is a lifestyle number and most withdrawals will come from pretax accounts.
+- There is no bracket engine. If your tax picture is unusual, leave the rate at 0 and put tax in the spending line yourself.
 
 ### Why there is no expense-ratio field
 
-Fund fees are easier to fold into `target_equity_cagr` than to capture with one number. A three-fund plus stock portfolio does not have a single published ER. If your all-in cost is about 0.15%, use `target_equity_cagr = 0.0685` instead of `0.07`.
+Fund fees are easier to fold into `target_equity_cagr` than to capture with one number. If your all-in cost is about 0.15%, use `target_equity_cagr = 0.0685` instead of `0.07`.
 
 ### Return assumptions
 
@@ -81,8 +83,6 @@ Fund fees are easier to fold into `target_equity_cagr` than to capture with one 
 bootstrap_block_sizes = [4, 5, 6, 8]
 ```
 
-Short blocks keep multi-year crashes together but recombine history more freely. 30–40 year blocks drawn from only 54 years of data are almost the same handful of overlapping lifetimes.
-
 ### One-time events
 
 ```toml
@@ -93,20 +93,21 @@ Short blocks keep multi-year crashes together but recombine history more freely.
 
 ## Understanding the output
 
-```
- PORTFOLIO AT AGE 100                     NOMINAL         TODAY'S $
----------------------------------------------------------------------------
- 99th percentile                      $46,077,966        $7,157,282
- ...
-```
-
-- **NOMINAL** — future dollars at end age
-- **TODAY'S $** — each simulation is deflated by **that path's** cumulative inflation, then the percentile is taken. This is not “nominal percentile ÷ median inflation.”
+- **NOMINAL** — future dollars at end age, after that year's return
+- **TODAY'S $** — each simulation is deflated by **that path's** cumulative inflation, then the percentile is taken
 - **Depleted anytime** — fraction of paths where portfolio + wedge hit zero at any retirement year
-- **Depleted at `end_age`** — fraction whose final recorded year was zero
+- **Depleted at `end_age`** — fraction whose final year was zero
 - **Wedge depleted** — wedge was never retired and is empty at the end
 
-Spending guardrails are always on: if the withdrawal rate exceeds 120% of the first retirement year's rate, core lifestyle spending is cut 10% permanently (healthcare extra is not cut). Depletion rates therefore assume you will accept those cuts. They are not “I kept spending $X forever.”
+### Spending guardrails
+
+Always on. This is belt-tightening through a downturn, not a permanent lifestyle change:
+
+- If the withdrawal rate exceeds **120%** of the first retirement year's rate, core spending is cut 10% (pre-Medicare extra is not cut).
+- If the withdrawal rate later falls back to the **original** rate or below, core spending is restored to the inflation-adjusted lifestyle.
+- Between those two marks, the current (possibly cut) spending stays put, so the rule does not chatter every year.
+
+Depletion rates assume you will accept those temporary cuts.
 
 ## Testing
 
