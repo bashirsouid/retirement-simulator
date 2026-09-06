@@ -33,7 +33,7 @@ withdrawal_tax_rate = 0.0
 # --- Pre-Medicare health insurance ---
 # Added only while retired and younger than medicare_age. Not cut by guardrails.
 # Look up plans: https://www.healthcare.gov/
-# Unsubsidized silver in the 60s is often ~$8k–$15k/yr per person.
+# Unsubsidized fee in the 60s is often ~$8k–$15k/yr per person.
 # After premium tax credits many people pay much less — use your quote.
 # 0 if you retire at/after 65 or already included it in annual_spending.
 medicare_age = 65
